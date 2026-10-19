@@ -20,19 +20,21 @@ disable-model-invocation: true
 
 ### 1. 首次使用先初始化环境
 
-在 skill 目录运行一次环境自检与安装（创建独立 venv、装 playwright+pillow、检测浏览器）：
+约定 `$SKILL_DIR` 指「本 SKILL.md 文件所在的目录」。在 skill 目录运行一次环境自检与安装（创建独立 venv、装 playwright+pillow、检测浏览器）：
 
 ```bash
-bash "<skill-dir>/scripts/setup.sh"
+bash "$SKILL_DIR/scripts/setup.sh"
 ```
 
-之后用 venv 内的 python 调用脚本。若已初始化过，跳过此步。
+脚本结束时会在终端打印出后续抓取命令，直接照抄执行即可。若 `$SKILL_DIR/.venv` 已存在，说明已初始化过，跳过此步。
 
 ### 2. 抓取并下载图片
 
 ```bash
-"<skill-dir>/.venv/bin/python" "<skill-dir>/scripts/fetch_note.py" "<笔记链接或ID>" --out "<输出目录>"
+"$SKILL_DIR/.venv/bin/python" "$SKILL_DIR/scripts/fetch_note.py" "<笔记链接或ID>" --out "<输出目录>"
 ```
+
+Windows（Git Bash / WSL）下 venv 的 python 在 `$SKILL_DIR/.venv/Scripts/python.exe`，其余参数一致。
 
 - 脚本会判断登录态：已有登录态则静默抓取；未登录会弹出一个可见浏览器窗口，提示用户用小红书 App 扫码，随后自动继续。
 - 输出结果：在输出目录下按笔记标题创建文件夹，内含按顺序命名的 `01.jpg`、`02.jpg`… 以及 `metadata.json`（标题、作者、正文、图片数）。
