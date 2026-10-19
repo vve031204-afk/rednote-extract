@@ -3,7 +3,7 @@ name: xiaohongshu-note-extract
 description: 小红书笔记抓取与梳理工具：按顺序下载笔记全部图片（webp 转 jpg）并忠实原文做分点梳理。仅当用户显式选定本 skill 时才调用，不要根据对话内容自动匹配触发。Xiaohongshu note extractor — downloads all note images in order and summarizes the author's content. Invoke only when the user explicitly selects this skill; do not auto-trigger from conversation content.
 agent_created: true
 disable-model-invocation: true
-version: 0.1.1
+version: 0.1.2
 ---
 
 # 小红书笔记抓取与梳理
@@ -44,11 +44,16 @@ bash "$SKILL_DIR/scripts/setup.sh"
 Windows（Git Bash / WSL）下 venv 的 python 在 `$SKILL_DIR/.venv/Scripts/python.exe`，其余参数一致。
 
 - 输入支持三种形式：完整笔记链接、App 里复制的分享文案（含 `xhslink.com` 短链）、24 位笔记 ID。**优先用分享链接**：裸 ID 缺少 `xsec_token`，可能打不开。
-- 脚本先无头尝试；未登录或遇到滑块才弹出可见窗口，提示扫码/拖动验证，完成后自动继续（想直接开窗口加 `--headed`）。
+- **默认全程无头抓取，不会自动打开可见窗口**。如果退出码是 `5`（需要登录或滑块验证），先暂停任务，用提问卡片询问用户「是否现在打开 Chrome 扫码登录」；用户同意后再运行：
+  ```bash
+  "$SKILL_DIR/.venv/bin/python" "$SKILL_DIR/scripts/fetch_note.py" --login
+  ```
+  该命令只做登录：打开一次可见窗口，检测到登录成功后**立即关闭**并保存登录态；随后重新执行第 2 步的抓取命令（仍为无头）。用户拒绝则停止任务并说明原因，不要擅自开窗口。
+- `--headed` 仅用于调试排查，默认不要使用。
 - `--out` 指定**用户要保存图片的目录**：用户指定就用用户指定的；用户未指定则用当前工作目录；**不要用临时目录**。
 - 输出结果：`<输出目录>/<标题>_<笔记ID前8位>/`，内含按顺序命名的 `01.jpg`、`02.jpg`… 以及 `metadata.json`（标题、作者、正文、图片数、失败列表）。
 - 登录态持久化在 `~/.xhs_session`，之后无需重复扫码。
-- **看退出码决定下一步**：`0` 全部成功；`2` 登录/抓取失败；`3` 笔记不存在或不可浏览；`4` 部分图片失败。遇到 `4` 先重跑一次补齐，不要带着缺图继续第 3 步。
+- **看退出码决定下一步**：`0` 全部成功；`1` 输入无法识别；`2` 登录/抓取失败；`3` 笔记不存在或不可浏览；`4` 部分图片失败；`5` 需要登录/人工验证（按上一条询问用户后跑 `--login`）。遇到 `4` 先重跑一次补齐，不要带着缺图继续第 3 步。
 - 下载成功后**必须继续执行第 3、4 步**，不要在此停下。
 
 ### 3. 读图梳理（忠实原文，必做）
@@ -56,6 +61,7 @@ Windows（Git Bash / WSL）下 venv 的 python 在 `$SKILL_DIR/.venv/Scripts/pyt
 - 用 Read 逐张读取文件夹里的图片，按页码顺序理解全文。
 - 分点梳理作者表述，**不增加、不修改、不评价**内容；原文里的例子、数字、措辞全部保留。
 - 发现作者表述自相矛盾处（如写「五个维度」却只列四项），用括号注明，不要擅自修正。
+- **思维导图 / 流程图 / 表格截图**：这类图是高密度文字，必须转写而不是一句带过。按层级写成嵌套列表（中心主题 → 一级分支 → 二级节点），保留节点原文、箭头方向和连线关系；不概括、不合并同义节点、不评价。字号太小看不清时，用 Pillow 把图放大 2 倍或切成 2×2 四块分别读，仍无法辨认的词写 `（原文不清：xxx）`。交付时单独标注，如 `图 3（思维导图）转写如下：`。
 - 把梳理结果写成 Markdown 文件（如 `复盘梳理.md`）放到同一文件夹，并在开头标注标题、作者、页数。
 
 ### 4. 交付

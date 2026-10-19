@@ -3,11 +3,13 @@
 
 用法:
     python fetch_note.py <笔记链接/分享文案/笔记ID> [--out 输出目录] [--profile 登录态目录]
-                         [--no-convert] [--headed] [--wait 秒] [--login-timeout 秒] [--retries N]
+                         [--no-convert] [--wait 秒] [--retries N]
+    python fetch_note.py --login [--profile 登录态目录] [--login-timeout 秒]
 
 功能:
     1. 识别 App 分享文案、xhslink 短链、完整笔记链接或裸 ID；
-    2. 检测登录态（profile 持久化，复用 cookie），未登录时弹出可见窗口扫码；
+    2. 默认全程无头抓取；需要登录/滑块时以退出码 5 结束，由调用方询问用户后
+       运行 --login 打开一次可见窗口完成扫码，登录态保存后自动关闭；
     3. 从页面 __INITIAL_STATE__ 提取标题/正文/作者/图片清单；
     4. 按 imageList 顺序下载图片（校验状态码与 Content-Type，失败重试），webp 转 jpg；
     5. 输出「输出目录/标题_短ID/01.jpg…」与 metadata.json。
@@ -21,6 +23,7 @@
     2  登录或抓取失败
     3  笔记不存在、私密或不可浏览
     4  图片未全部下载成功（部分成功也会写 metadata.json）
+    5  需要登录或人工验证（先询问用户，同意后运行 --login）
 """
 import argparse
 import io
@@ -58,6 +61,15 @@ _IMAGE_FILE_RE = re.compile(r"^(\d{2,3})\.(?:jpe?g|webp)$", re.IGNORECASE)
 UNAVAILABLE_MARKERS = ("笔记不存在", "暂时无法浏览", "页面不见了", "内容无法查看", "你访问的页面")
 CAPTCHA_MARKERS = ("拖动", "拼图", "滑块")
 LOGIN_MARKERS = ("扫码登录", "登录后查看", "登录后推荐", "立即登录")
+# 小红书对 IP 的风控页（error_code 300012），不是登录墙也不是笔记不存在
+BLOCKED_MARKERS = ("IP存在风险", "安全限制", "error_code=300012")
+
+LOGIN_HINT = ("需要登录小红书：请先询问用户，同意后运行 "
+              "`fetch_note.py --login` 打开扫码窗口。")
+CAPTCHA_HINT = ("需要人工完成滑块验证：请先询问用户，同意后运行 "
+                "`fetch_note.py --login` 打开验证窗口。")
+BLOCKED_HINT = ("小红书返回安全限制（IP 风险，error_code 300012）：请切换网络/代理后重试，"
+                "或在浏览器里手动打开小红书完成验证。")
 
 
 def note_url(target):
@@ -144,9 +156,13 @@ def page_state(page):
     text = _body_text(page)
     if any(k in text for k in UNAVAILABLE_MARKERS):
         return "unavailable"
+    if any(k in text for k in BLOCKED_MARKERS):
+        return "blocked"
     if any(k in text for k in CAPTCHA_MARKERS):
         return "captcha"
     if any(k in text for k in LOGIN_MARKERS):
+        return "login"
+    if "website-login" in (page.url or ""):
         return "login"
     return "unknown"
 
@@ -157,13 +173,76 @@ def wait_for_note(page, timeout, label="等待笔记加载"):
     last_log = 0.0
     while time.time() < deadline:
         state = page_state(page)
-        if state in ("loaded", "unavailable", "captcha"):
+        if state in ("loaded", "unavailable", "captcha", "blocked"):
             return state
         if time.time() - last_log > 20:
             print(f"  {label}...")
             last_log = time.time()
         time.sleep(2)
     return page_state(page)
+
+
+def is_logged_in(ctx):
+    """登录态判据：存在非空的 web_session cookie。"""
+    try:
+        for cookie in ctx.cookies():
+            if cookie.get("name") in ("web_session", "web_session_id") and cookie.get("value"):
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def login_flow(p, profile, launch_kwargs, timeout):
+    """打开一次可见窗口供用户扫码，登录成功后立即关闭并返回 0；超时返回 5。
+
+    登录页可能自己跳转或新开标签页，循环里需要容忍页面被关闭、重新取页。
+    """
+    print("正在打开浏览器窗口，请用小红书 App 扫码登录（成功后窗口会自动关闭）...")
+    ctx = launch_context(p, profile, headless=False, launch_kwargs=launch_kwargs)
+    try:
+        page = ctx.pages[0] if ctx.pages else ctx.new_page()
+        try:
+            page.goto("https://www.xiaohongshu.com/explore",
+                      wait_until="domcontentloaded", timeout=90000)
+        except Exception:
+            pass
+        deadline = time.time() + max(10, timeout)
+        while time.time() < deadline:
+            try:
+                pages = ctx.pages
+            except Exception:
+                print("浏览器窗口已关闭，登录未完成。", file=sys.stderr)
+                return 5
+            if not pages:
+                try:
+                    page = ctx.new_page()
+                    page.goto("https://www.xiaohongshu.com/explore",
+                              wait_until="domcontentloaded", timeout=60000)
+                except Exception:
+                    pass
+            else:
+                page = pages[0]
+            try:
+                # 有 web_session、页面不是登录墙/风控页，才算登录成功
+                st = page_state(page)
+                if st == "blocked":
+                    print("小红书返回安全限制（IP 风险），请切换网络后重试扫码。",
+                          file=sys.stderr)
+                    return 2
+                if is_logged_in(ctx) and st != "login" and "website-login" not in (page.url or ""):
+                    print("登录成功，登录态已保存。")
+                    return 0
+            except Exception:
+                pass
+            time.sleep(1)
+        print("等待登录超时，请重试。", file=sys.stderr)
+        return 5
+    finally:
+        try:
+            ctx.close()
+        except Exception:
+            pass
 
 
 def fetch_image(ctx, url, attempts=3):
@@ -279,15 +358,39 @@ def fail(code, message):
 
 def main():
     ap = argparse.ArgumentParser(description="小红书笔记抓取与图片下载")
-    ap.add_argument("target", help="笔记链接、App 分享文案或笔记 ID")
+    ap.add_argument("target", nargs="?", help="笔记链接、App 分享文案或笔记 ID")
+    ap.add_argument("--login", action="store_true",
+                    help="只做登录：打开一次可见窗口扫码，成功后保存登录态并退出")
     ap.add_argument("--out", default=os.getcwd(), help="输出目录（默认当前目录）")
     ap.add_argument("--profile", default=DEFAULT_PROFILE, help="登录态持久化目录")
     ap.add_argument("--no-convert", action="store_true", help="不转 jpg，保留 webp")
-    ap.add_argument("--headed", action="store_true", help="直接打开可见窗口（默认先无头尝试）")
+    ap.add_argument("--headed", action="store_true",
+                    help="调试用：直接打开可见窗口（默认全程无头）")
     ap.add_argument("--wait", type=int, default=30, help="已登录时等待详情页加载的秒数（默认 30）")
-    ap.add_argument("--login-timeout", type=int, default=300, help="扫码登录最长等待秒数（默认 300）")
+    ap.add_argument("--login-timeout", type=int, default=300,
+                    help="登录模式下最长等待秒数（默认 300）")
     ap.add_argument("--retries", type=int, default=3, help="单张图片下载重试次数（默认 3）")
     args = ap.parse_args()
+
+    launch_kwargs = dict(
+        viewport={"width": 1360, "height": 940},
+        locale="zh-CN",
+        args=["--disable-blink-features=AutomationControlled", "--no-first-run"],
+    )
+    profile = os.path.expanduser(args.profile)
+
+    if args.login:
+        os.makedirs(profile, exist_ok=True)
+        try:
+            os.chmod(profile, 0o700)
+        except OSError:
+            pass
+        with sync_playwright() as p:
+            code = login_flow(p, profile, launch_kwargs, args.login_timeout)
+        sys.exit(code)
+
+    if not args.target:
+        ap.error("缺少 target：请提供笔记链接/分享文案/ID，或使用 --login")
 
     try:
         url = note_url(args.target)
@@ -295,7 +398,6 @@ def main():
         fail(1, str(e))
 
     out_dir = os.path.expanduser(args.out)
-    profile = os.path.expanduser(args.profile)
     os.makedirs(out_dir, exist_ok=True)
     os.makedirs(profile, exist_ok=True)
     try:
@@ -304,11 +406,6 @@ def main():
         pass
 
     note_id = note_id_from(url)
-    launch_kwargs = dict(
-        viewport={"width": 1360, "height": 940},
-        locale="zh-CN",
-        args=["--disable-blink-features=AutomationControlled", "--no-first-run"],
-    )
 
     ctx = None
     try:
@@ -325,27 +422,40 @@ def main():
 
             if state == "unavailable":
                 fail(3, "笔记不存在、已删除或不可浏览（私密/违规）。请确认链接有效。")
+            if state == "blocked":
+                fail(2, BLOCKED_HINT)
 
             if state != "loaded" and not args.headed:
-                # 未登录或命中验证：换可见窗口，让用户扫码/过滑块
+                # 默认不打开可见窗口：需要登录/验证时直接退出，由调用方询问用户
+                st = page_state(page)
+                if st == "blocked":
+                    fail(2, BLOCKED_HINT)
+                if st == "captcha":
+                    fail(5, CAPTCHA_HINT)
+                if st == "unavailable":
+                    fail(3, "笔记不存在、已删除或不可浏览（私密/违规）。请确认链接有效。")
+                if st == "login":
+                    fail(5, LOGIN_HINT)
+                # unknown：可能只是加载慢，重载一次再判定
                 try:
-                    ctx.close()
+                    page.reload(wait_until="domcontentloaded", timeout=60000)
+                    state = wait_for_note(page, args.wait)
                 except Exception:
-                    pass
-                ctx = None
-                print("需要登录，正在打开扫码窗口...")
-                ctx = launch_context(p, profile, headless=False,
-                                     launch_kwargs=launch_kwargs)
-                page = ctx.pages[0] if ctx.pages else ctx.new_page()
-                try:
-                    page.goto(url, wait_until="domcontentloaded", timeout=90000)
-                except Exception as e:
-                    fail(2, f"打开页面失败：{e}")
+                    state = "unknown"
+                if state == "unavailable":
+                    fail(3, "笔记不存在、已删除或不可浏览（私密/违规）。请确认链接有效。")
+                if state != "loaded":
+                    # 无登录态时，未加载出详情页基本就是登录墙没被文案命中
+                    if not is_logged_in(ctx):
+                        fail(5, LOGIN_HINT)
+                    fail(2, "页面加载超时。可加 --headed 打开可见窗口排查。")
 
             if state != "loaded":
                 st = page_state(page)
                 if st == "unavailable":
                     fail(3, "笔记不存在、已删除或不可浏览（私密/违规）。请确认链接有效。")
+                if st == "blocked":
+                    fail(2, BLOCKED_HINT)
                 if st == "captcha":
                     print("检测到滑块验证，请在弹出的浏览器窗口中拖动完成验证...")
                 else:
