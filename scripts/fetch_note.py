@@ -89,7 +89,7 @@ def is_loaded(page):
 def download(ctx, imgs, folder, convert=True):
     saved = []
     for i, im in enumerate(imgs, 1):
-        url = im.get("url") or im
+        url = im.get("url") if isinstance(im, dict) else im
         try:
             r = ctx.request.get(url, timeout=90000,
                                 headers={"Referer": "https://www.xiaohongshu.com/"})
@@ -115,6 +115,26 @@ def download(ctx, imgs, folder, convert=True):
     return saved
 
 
+def launch_context(p, profile, headless, launch_kwargs):
+    """启动浏览器：优先系统 Chrome，其次 playwright 自带 chromium，都失败给出友好提示。"""
+    last_err = None
+    try:
+        return p.chromium.launch_persistent_context(
+            profile, channel="chrome", headless=headless, **launch_kwargs)
+    except Exception as e:
+        last_err = e
+    try:
+        return p.chromium.launch_persistent_context(
+            profile, headless=headless, **launch_kwargs)
+    except Exception as e:
+        last_err = e
+    sys.exit(
+        "无法启动浏览器：本机既没有 Chrome，也没有 playwright 的 chromium。\n"
+        "请先运行 scripts/setup.sh 安装浏览器，再重试。\n"
+        f"原始错误：{last_err}"
+    )
+
+
 def main():
     ap = argparse.ArgumentParser(description="小红书笔记抓取与图片下载")
     ap.add_argument("target", help="笔记 URL 或笔记 ID")
@@ -134,14 +154,7 @@ def main():
             args=["--disable-blink-features=AutomationControlled", "--no-first-run"],
         )
         # 先无头尝试（若已有登录态直接成功）；失败/未登录再起可见窗口
-        ctx = None
-        headless = True
-        try:
-            ctx = p.chromium.launch_persistent_context(
-                args.profile, channel="chrome", headless=headless, **launch_kwargs)
-        except Exception:
-            ctx = p.chromium.launch_persistent_context(
-                args.profile, headless=headless, **launch_kwargs)
+        ctx = launch_context(p, args.profile, headless=True, launch_kwargs=launch_kwargs)
 
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         page.goto(url, wait_until="domcontentloaded", timeout=90000)
@@ -151,12 +164,7 @@ def main():
             # 未登录：关掉无头实例，弹可见窗口扫码
             ctx.close()
             print("需要登录，正在打开扫码窗口，请用小红书 App 扫码...")
-            try:
-                ctx = p.chromium.launch_persistent_context(
-                    args.profile, channel="chrome", headless=False, **launch_kwargs)
-            except Exception:
-                ctx = p.chromium.launch_persistent_context(
-                    args.profile, headless=False, **launch_kwargs)
+            ctx = launch_context(p, args.profile, headless=False, launch_kwargs=launch_kwargs)
             page = ctx.pages[0] if ctx.pages else ctx.new_page()
             page.goto(url, wait_until="domcontentloaded", timeout=90000)
 
