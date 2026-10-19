@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # 环境自检与安装脚本（跨平台，macOS / Linux / Windows-GitBash 可用）
-# 在 skill 目录下建独立 venv，不污染系统 Python。
+# 幂等、无交互：已就绪的部分秒级跳过，缺什么装什么。
 set -e
+export PIP_DISABLE_PIP_VERSION_CHECK=1
 
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV_DIR="$SKILL_DIR/.venv"
@@ -9,48 +10,54 @@ VENV_DIR="$SKILL_DIR/.venv"
 # 1. 定位可用的 Python3
 PY=""
 for c in python3 python; do
-  if command -v "$c" >/dev/null 2>&1; then PY="$c"; break; fi
+  command -v "$c" >/dev/null 2>&1 && { PY="$c"; break; }
 done
 if [ -z "$PY" ]; then
   echo "[错误] 未找到 python3，请先安装 Python 3.10+（https://www.python.org/downloads/）" >&2
   exit 1
 fi
-echo "[1/4] 使用 Python: $($PY --version 2>&1)"
+echo "[1/4] Python: $($PY --version 2>&1)"
 
-# 2. 创建 venv
+# 2. 创建 venv（已存在则跳过）
 if [ ! -x "$VENV_DIR/bin/python" ]; then
   echo "[2/4] 创建独立虚拟环境 .venv ..."
   "$PY" -m venv "$VENV_DIR"
 fi
 PYBIN="$VENV_DIR/bin/python"
+[ -x "$PYBIN" ] || PYBIN="$VENV_DIR/Scripts/python.exe"
 if [ ! -x "$PYBIN" ]; then
-  # Windows GitBash 下 venv 的 python 在 Scripts/
-  PYBIN="$VENV_DIR/Scripts/python.exe"
+  echo "[错误] 虚拟环境 python 创建失败" >&2
+  exit 1
 fi
 
-# 3. 安装依赖
-echo "[3/4] 安装依赖 playwright + pillow ..."
-"$PYBIN" -m pip install --quiet --upgrade pip
-"$PYBIN" -m pip install --quiet playwright pillow
+# 3. 安装依赖（幂等：已装则跳过）
+echo "[3/4] 检查依赖 playwright + pillow ..."
+if "$PYBIN" -c "import playwright, PIL" 2>/dev/null; then
+  echo "  ✓ 依赖已就绪，跳过安装"
+else
+  echo "  安装 playwright + pillow（首次约 50MB，请耐心等待）..."
+  "$PYBIN" -m pip install --quiet --no-input --upgrade pip
+  "$PYBIN" -m pip install --quiet --no-input playwright pillow
+fi
 
-# 4. 检测浏览器
-echo "[4/4] 检测浏览器 ..."
+# 4. 检测浏览器（仅「真正的 Chrome」能省去 chromium 下载；否则装 playwright 自带 chromium）
+echo "[4/4] 检查浏览器 ..."
 HAS_CHROME=0
 if [ -d "/Applications/Google Chrome.app" ] || [ -d "$HOME/Applications/Google Chrome.app" ]; then
   HAS_CHROME=1
-elif command -v google-chrome >/dev/null 2>&1 || command -v chromium >/dev/null 2>&1; then
+elif command -v google-chrome >/dev/null 2>&1 || command -v google-chrome-stable >/dev/null 2>&1; then
   HAS_CHROME=1
-elif [ -d "/Applications/Chromium.app" ] || [ -d "/Applications/Microsoft Edge.app" ]; then
+elif [ -f "/c/Program Files/Google/Chrome/Application/chrome.exe" ] || [ -f "/c/Program Files (x86)/Google/Chrome/Application/chrome.exe" ]; then
   HAS_CHROME=1
 fi
 
 if [ "$HAS_CHROME" = "1" ]; then
-  echo "  ✓ 检测到本机浏览器（将使用 channel='chrome' 或默认浏览器）"
+  echo "  ✓ 检测到 Chrome，跳过浏览器下载"
 else
-  echo "  未检测到 Chrome，正在安装 playwright 自带的 chromium（约 120MB）..."
+  echo "  未检测到 Chrome，安装 playwright 自带 chromium（约 120MB，首次较慢）..."
   "$PYBIN" -m playwright install chromium
 fi
 
 echo ""
-echo "✓ 环境就绪。运行方式："
-echo "  $VENV_DIR/bin/python $SKILL_DIR/scripts/fetch_note.py '<小红书笔记链接或ID>' --out <输出目录>"
+echo "✓ 环境就绪。运行："
+echo "  $PYBIN $SKILL_DIR/scripts/fetch_note.py '<小红书笔记链接或ID>' --out <输出目录>"
