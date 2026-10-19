@@ -78,10 +78,14 @@ def extract_note(page):
 
 
 def is_loaded(page):
+    """只有笔记详情页的标题元素出现，才认为真正加载成功。
+
+    注意：未登录时小红书仍可能返回笔记的「标题 + 封面第一张图」，
+    若用 extract_note 非空兜底会误判为已加载、漏掉扫码，导致只存到 1 张图。
+    因此这里只认 #detail-title（登录后的完整详情页才有）。
+    """
     try:
-        if page.locator("#detail-title").count() > 0:
-            return True
-        return extract_note(page) is not None
+        return page.locator("#detail-title").count() > 0
     except Exception:
         return False
 
@@ -169,12 +173,17 @@ def main():
             page = ctx.pages[0] if ctx.pages else ctx.new_page()
             page.goto(url, wait_until="domcontentloaded", timeout=90000)
 
+            logged_in = False
             for i in range(150):  # 最长约 5 分钟
                 time.sleep(2)
                 if is_loaded(page):
+                    logged_in = True
                     break
                 if i % 10 == 0:
                     print(f"  等待扫码登录... {i * 2}s")
+            if not logged_in:
+                print("登录超时：5 分钟未检测到笔记内容。请重新运行，并在弹出的窗口中完成扫码。")
+                sys.exit(2)
 
         note = extract_note(page)
         if not note:
