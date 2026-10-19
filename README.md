@@ -32,7 +32,7 @@ git clone https://github.com/vve031204-afk/xiaohongshu-note-extract.git ~/.agent
 git clone https://github.com/vve031204-afk/xiaohongshu-note-extract.git ~/.dsh/skills/xiaohongshu-note-extract
 ```
 
-> 注意：本仓库是**私有仓库**。clone 需要登录（或 token）；在别人机器上用，需先把对方账号加为协作者，或改为 public。
+> 本仓库已公开，任何人可直接 clone，无需登录。
 
 ## 首次使用（每台新机器做一次）
 
