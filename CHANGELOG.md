@@ -2,6 +2,19 @@
 
 > 时间统一为北京时间（UTC+8），精确到秒。
 
+## v0.1.3 — 2026-10-20 01:18:20（UTC+8）
+
+可观测性与退出路径修复（来自三次真实使用的耗时记录）：
+
+- **修复退出挂起**：`ctx.close()` 移入 `with sync_playwright()` 内层，`playwright.stop()` 之后不再二次关闭；关闭增加 10 秒 SIGALRM 兜底，超时强制退出，避免“图早已下完、进程却不退”。
+- **消除输出盲区**：启动时开启行缓冲，所有进度带 `[HH:MM:SS]` 时间戳并立即 flush；新增 `--progress-file`，原子写入 `launch → load → login → download → done`，失败写 `error`。
+- **stale 锁自动清理**：启动前检查 `SingletonLock` 指向的 pid，进程不存在则清理 `SingletonLock/Socket/Cookie`；仍冲突时清理后重试一次，错误信息保留原始异常与占用 pid。
+- **新增 `--probe`**：只验证登录态、笔记可浏览性与图片数，5–10 秒返回、不下载，用于开工前体检。
+- **登录体验**：`--login-timeout` 默认 300 → 90 秒；每 15 秒输出已等待时长；用非默认 profile 登录成功后自动把 cookie 回写 `~/.xhs_session`（可用 `--save-login-to` / `--no-write-back` 控制）。
+- **并发隔离**：新增 `--isolated-profile`，复制独立 profile 并跳过 `Singleton*`，避免多会话共用目录互相踩锁。
+- **运行纪律**：SKILL.md / README 增加 `-u` + 日志落盘、禁止 `| tail`、前台最多 100 秒、先看 `metadata.json` 再判进程。
+- **回归测试**：新增 `tests/test_fetch_note.py`（10 项，离线运行），覆盖关闭顺序（close 必须先于 stop）、进度文件阶段、stale 锁清理、风控退出与 `--probe` 不下载。
+
 ## v0.1.2 — 2026-10-20 01:03:23（UTC+8）
 
 交互体验与读图能力：

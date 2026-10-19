@@ -3,7 +3,7 @@ name: xiaohongshu-note-extract
 description: 小红书笔记抓取与梳理工具：按顺序下载笔记全部图片（webp 转 jpg）并忠实原文做分点梳理。仅当用户显式选定本 skill 时才调用，不要根据对话内容自动匹配触发。Xiaohongshu note extractor — downloads all note images in order and summarizes the author's content. Invoke only when the user explicitly selects this skill; do not auto-trigger from conversation content.
 agent_created: true
 disable-model-invocation: true
-version: 0.1.2
+version: 0.1.3
 ---
 
 # 小红书笔记抓取与梳理
@@ -16,6 +16,25 @@ version: 0.1.2
 
 - 仅当用户显式选定本 skill 时执行，不根据对话内容自动匹配触发。
 - 适用场景（供用户显式选择时参考）：下载小红书笔记全部图片、提取笔记文字、系统性梳理作者表述并整理成文档。
+
+
+## 运行纪律（每次抓取都要遵守）
+
+1. **先体检，再抓取**（5–10 秒，只验证不下载）：
+   ```bash
+   "$SKILL_DIR/.venv/bin/python" -u "$SKILL_DIR/scripts/fetch_note.py" "<链接>" --probe --progress-file /tmp/xhs-progress.json
+   ```
+   退出码 `0` 才进入正式抓取；`5` 先按第 2 步的登录流程询问用户；`2`/`3` 按提示处理。
+2. **一律 `-u` + 日志落盘，禁止接 `| tail`**。管道会让 Python 全缓冲，进程结束前外部看不到任何输出：
+   ```bash
+   "$SKILL_DIR/.venv/bin/python" -u "$SKILL_DIR/scripts/fetch_note.py" "<链接>" --out "<输出目录>" \
+     --progress-file /tmp/xhs-progress.json > /tmp/xhs.log 2>&1 &
+   sleep 15 && tail -30 /tmp/xhs.log
+   ```
+3. **前台最多等 100 秒**：没结束就转后台，之后每 10–15 秒看一次 `/tmp/xhs.log` 或进度文件，不要空等。
+4. **先看产物，再判进程**：`<输出目录>/*/metadata.json` 存在且 `failed_count == 0` 就说明交付已完成；进程是否退出不影响结果。
+5. 并发运行或反复重跑时用 `--isolated-profile`，每次复制独立 profile，避免共用目录互相踩锁。
+6. 脚本自带 `--progress-file`：阶段依次为 `launch → load → login → download → done`（失败写 `error`），可直接读取判断卡点。
 
 ## 执行步骤
 
@@ -38,7 +57,9 @@ bash "$SKILL_DIR/scripts/setup.sh"
 ### 2. 抓取并下载图片
 
 ```bash
-"$SKILL_DIR/.venv/bin/python" "$SKILL_DIR/scripts/fetch_note.py" "<笔记链接 / App 分享文案 / 笔记ID>" --out "<输出目录>"
+"$SKILL_DIR/.venv/bin/python" -u "$SKILL_DIR/scripts/fetch_note.py" "<笔记链接 / App 分享文案 / 笔记ID>" \
+  --out "<输出目录>" --progress-file /tmp/xhs-progress.json > /tmp/xhs.log 2>&1 &
+sleep 15 && tail -30 /tmp/xhs.log
 ```
 
 Windows（Git Bash / WSL）下 venv 的 python 在 `$SKILL_DIR/.venv/Scripts/python.exe`，其余参数一致。
@@ -53,7 +74,7 @@ Windows（Git Bash / WSL）下 venv 的 python 在 `$SKILL_DIR/.venv/Scripts/pyt
 - `--out` 指定**用户要保存图片的目录**：用户指定就用用户指定的；用户未指定则用当前工作目录；**不要用临时目录**。
 - 输出结果：`<输出目录>/<标题>_<笔记ID前8位>/`，内含按顺序命名的 `01.jpg`、`02.jpg`… 以及 `metadata.json`（标题、作者、正文、图片数、失败列表）。
 - 登录态持久化在 `~/.xhs_session`，之后无需重复扫码。
-- **看退出码决定下一步**：`0` 全部成功；`1` 输入无法识别；`2` 登录/抓取失败；`3` 笔记不存在或不可浏览；`4` 部分图片失败；`5` 需要登录/人工验证（按上一条询问用户后跑 `--login`）。遇到 `4` 先重跑一次补齐，不要带着缺图继续第 3 步。
+- **看退出码决定下一步**：`0` 全部成功；`1` 输入无法识别；`2` 登录/抓取失败；`3` 笔记不存在或不可浏览；`4` 部分图片失败；`5` 需要登录/人工验证（按上一条询问用户后跑 `--login`，登录默认最多等 90 秒，可用 `--login-timeout` 调整）。遇到 `4` 先重跑一次补齐，不要带着缺图继续第 3 步。
 - 下载成功后**必须继续执行第 3、4 步**，不要在此停下。
 
 ### 3. 读图梳理（忠实原文，必做）

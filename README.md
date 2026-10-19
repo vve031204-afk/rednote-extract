@@ -16,6 +16,8 @@ xiaohongshu-note-extract/
 └── scripts/
     ├── setup.sh              # 环境自检 + 安装（建独立 venv、装依赖、检测浏览器）
     └── fetch_note.py         # 抓取 + 下载 + 转 jpg
+tests/
+    └── test_fetch_note.py    # 离线回归测试（不联网、不启动真实浏览器）
 ```
 
 ## 安装（按你用的工具选一条）
@@ -48,7 +50,9 @@ bash scripts/setup.sh
 
 ```bash
 # macOS / Linux
-"$SKILL_DIR/.venv/bin/python" "$SKILL_DIR/scripts/fetch_note.py" "<笔记链接 / 分享文案 / 笔记ID>" --out "<输出目录>"
+"$SKILL_DIR/.venv/bin/python" -u "$SKILL_DIR/scripts/fetch_note.py" "<笔记链接 / 分享文案 / 笔记ID>" \
+  --out "<输出目录>" --progress-file /tmp/xhs-progress.json > /tmp/xhs.log 2>&1 &
+sleep 15 && tail -30 /tmp/xhs.log
 
 # Windows（Git Bash / WSL）
 "$SKILL_DIR/.venv/Scripts/python.exe" "$SKILL_DIR/scripts/fetch_note.py" "<笔记链接 / 分享文案 / 笔记ID>" --out "<输出目录>"
@@ -66,15 +70,28 @@ bash scripts/setup.sh
 |---|---|---|
 | `target` | 笔记链接 / 分享文案 / 笔记 ID（抓取时必填） | — |
 | `--login` | 只做登录：打开一次可见窗口扫码，成功后保存登录态并退出 | 关 |
+| `--probe` | 只体检：验证登录态/笔记可浏览/图片数，不下载 | 关 |
+| `--progress-file` | 把当前阶段原子写入该文件，供外部轮询 | 关 |
+| `--isolated-profile` | 复制临时 profile（并发安全，结束保留） | 关 |
+| `--save-login-to` | 登录成功后写回的 profile | `~/.xhs_session` |
+| `--no-write-back` | 用非默认 profile 登录时不写回默认目录 | 关 |
 | `--out` | 图片输出目录 | 当前目录 |
 | `--profile` | 登录态持久化目录 | `~/.xhs_session` |
 | `--no-convert` | 不转 jpg，保留 webp | 关 |
 | `--headed` | 调试用：直接打开可见窗口（默认全程无头） | 关 |
 | `--wait` | 已登录时等待详情页加载的秒数 | 30 |
-| `--login-timeout` | `--login` 模式的最长等待秒数 | 300 |
+| `--login-timeout` | `--login` 模式的最长等待秒数 | 90 |
 | `--retries` | 单张图片下载重试次数 | 3 |
 
 产出：`<输出目录>/<标题>_<笔记ID前8位>/`，内含 `01.jpg`、`02.jpg`… 和 `metadata.json`（标题/作者/正文/图片数/失败列表）。重跑会自动清理旧序号图，避免图片变少时残留旧页。
+
+### 运行纪律（避免“看不见状态”）
+
+1. **先体检**：`--probe` 5–10 秒内返回登录态、笔记可浏览性和图片数，`0` 才正式抓取。
+2. **`-u` + 日志落盘，不要接 `| tail`**：管道会让 Python 全缓冲，进程结束前外部零输出。
+3. **前台最多等 100 秒**，超时转后台，再轮询日志/进度文件。
+4. **先看产物再判进程**：`metadata.json` 存在且 `failed_count == 0` 即已完成，与进程是否退出无关。
+5. `--progress-file` 阶段：`launch → load → login → download → done`，失败写 `error`。
 
 **默认全程无头，不会自动弹出浏览器**。需要登录或滑块验证时，脚本以退出码 `5` 结束、不等待；确认要登录后再单独运行：
 
@@ -105,5 +122,6 @@ python scripts/fetch_note.py --login
 - **图片顺序**：脚本按接口 `imageList` 顺序下载，已规避 DOM 顺序错乱问题。
 - **原图是 webp**：脚本默认转 jpg（quality 95），加 `--no-convert` 可保留原格式。
 - **本机没 Chrome**：脚本会提示安装 Chrome，或手动 `python -m playwright install chromium`（不会自动下载）。
-- **提示登录态目录被占用**：上一次运行留下了残留 Chrome，关掉它再重试。
+- **提示登录态目录被占用**：脚本会先自动清理 stale 的 `SingletonLock/Socket/Cookie` 再启动；只有锁指向的 Chrome 进程仍存活时才需要手动关闭。
+- **为什么接 `| tail` 看不到输出**：stdio 走管道时 Python 默认全缓冲；用 `-u` 或加 `--progress-file` 即可实时观测。
 - 更多细节见 `references/notes.md`。
