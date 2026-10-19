@@ -40,7 +40,7 @@ else
   "$PYBIN" -m pip install --quiet --no-input playwright pillow
 fi
 
-# 4. 检测浏览器（仅「真正的 Chrome」能省去 chromium 下载；否则装 playwright 自带 chromium）
+# 4. 检测浏览器（优先系统 Chrome；不自动下载 chromium，避免误判/下载卡住）
 echo "[4/4] 检查浏览器 ..."
 HAS_CHROME=0
 if [ -d "/Applications/Google Chrome.app" ] || [ -d "$HOME/Applications/Google Chrome.app" ]; then
@@ -52,10 +52,12 @@ elif [ -f "/c/Program Files/Google/Chrome/Application/chrome.exe" ] || [ -f "/c/
 fi
 
 if [ "$HAS_CHROME" = "1" ]; then
-  echo "  ✓ 检测到 Chrome，跳过浏览器下载"
+  echo "  ✓ 检测到系统 Chrome，浏览器就绪（fetch 脚本会直接使用，无需下载 chromium）"
 else
-  echo "  未检测到 Chrome，安装 playwright 自带 chromium（约 120MB，首次较慢）..."
-  "$PYBIN" -m playwright install chromium
+  echo "  ⚠ 未检测到系统 Chrome。"
+  echo "    建议安装 Google Chrome：https://www.google.com/chrome/"
+  echo "    或手动下载 playwright chromium（可选，约 120MB）："
+  echo "      $PYBIN -m playwright install chromium"
 fi
 
 echo ""
