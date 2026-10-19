@@ -1,0 +1,66 @@
+---
+name: xiaohongshu-note-extract
+description: 小红书笔记抓取与梳理工具：按顺序下载笔记全部图片（webp 转 jpg）并忠实原文做分点梳理。仅当用户显式选定本 skill 时才调用，不要根据对话内容自动匹配触发。Xiaohongshu note extractor: downloads all note images in order and summarizes the author's content. Invoke only when the user explicitly selects this skill; do not auto-trigger from conversation content.
+agent_created: true
+disable-model-invocation: true
+---
+
+# 小红书笔记抓取与梳理
+
+## 概述
+
+抓取小红书笔记的全部图片并按顺序存档，提取正文文字，并忠实于原文做分点梳理。核心难点（登录墙、图片顺序、webp 转码）已固化到脚本 `scripts/fetch_note.py`，直接复用，不要重新摸索。
+
+## 调用方式
+
+- 仅当用户显式选定本 skill 时执行，不根据对话内容自动匹配触发。
+- 适用场景（供用户显式选择时参考）：下载小红书笔记全部图片、提取笔记文字、系统性梳理作者表述并整理成文档。
+
+## 执行步骤
+
+### 1. 首次使用先初始化环境
+
+在 skill 目录运行一次环境自检与安装（创建独立 venv、装 playwright+pillow、检测浏览器）：
+
+```bash
+bash "<skill-dir>/scripts/setup.sh"
+```
+
+之后用 venv 内的 python 调用脚本。若已初始化过，跳过此步。
+
+### 2. 抓取并下载图片
+
+```bash
+"<skill-dir>/.venv/bin/python" "<skill-dir>/scripts/fetch_note.py" "<笔记链接或ID>" --out "<输出目录>"
+```
+
+- 脚本会判断登录态：已有登录态则静默抓取；未登录会弹出一个可见浏览器窗口，提示用户用小红书 App 扫码，随后自动继续。
+- 输出结果：在输出目录下按笔记标题创建文件夹，内含按顺序命名的 `01.jpg`、`02.jpg`… 以及 `metadata.json`（标题、作者、正文、图片数）。
+- 登录态持久化在 `~/.xhs_session`，之后无需重复扫码。
+
+### 3. 读图梳理（忠实原文）
+
+- 用 Read 逐张读取文件夹里的图片，按页码顺序理解全文。
+- 分点梳理作者表述，**不增加、不修改、不评价**内容；原文里的例子、数字、措辞全部保留。
+- 发现作者表述自相矛盾处（如写「五个维度」却只列四项），用括号注明，不要擅自修正。
+- 把梳理结果写成 Markdown 文件（如 `复盘梳理.md`）放到同一文件夹，并在开头标注标题、作者、页数。
+
+### 4. 交付
+
+- 把图片文件夹与梳理文档一并交付给用户。
+- 简要说明：笔记标题、作者、图片数量、梳理的章节结构。
+
+## 注意事项
+
+- 图片顺序以接口 `imageList` 为准，不要信任页面 DOM 的图片顺序（可能错序）。
+- 下载得到的原图多为 webp，脚本默认已转 jpg；如需保留原格式，加 `--no-convert`。
+- 若脚本提示缺少 playwright，先跑 `setup.sh`。
+- 详细坑与结论见 `references/notes.md`，遇到异常时优先查阅。
+
+## 跨工具复用（Codex / DeepSeek Harness 等）
+
+- 本 skill 的 `SKILL.md` 使用标准 `name` + `description` frontmatter，脚本为纯 Python + Playwright，无任何工具特有依赖。
+- 只要把本目录（或软链接）放到目标工具的 skills 扫描目录即可被识别：
+  - Codex CLI：`~/.agents/skills/` 或项目 `.agents/skills/`
+  - DeepSeek Harness：`~/.dsh/skills/` 或 `~/.agents/skills/`
+- 在新电脑上：拷贝本目录 → 运行 `scripts/setup.sh` → 首次扫码登录一次，即可使用。
