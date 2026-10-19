@@ -129,8 +129,9 @@ def launch_context(p, profile, headless, launch_kwargs):
     except Exception as e:
         last_err = e
     sys.exit(
-        "无法启动浏览器：本机既没有 Chrome，也没有 playwright 的 chromium。\n"
-        "请先运行 scripts/setup.sh 安装浏览器，再重试。\n"
+        "无法启动浏览器：既没有系统 Chrome，也没有 playwright 的 chromium。\n"
+        "请安装 Google Chrome（https://www.google.com/chrome/）后重试；\n"
+        "或手动下载 chromium：python -m playwright install chromium。\n"
         f"原始错误：{last_err}"
     )
 
