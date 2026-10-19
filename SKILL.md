@@ -3,7 +3,7 @@ name: xiaohongshu-note-extract
 description: 小红书笔记抓取与梳理工具：按顺序下载笔记全部图片（webp 转 jpg）并忠实原文做分点梳理。仅当用户显式选定本 skill 时才调用，不要根据对话内容自动匹配触发。Xiaohongshu note extractor — downloads all note images in order and summarizes the author's content. Invoke only when the user explicitly selects this skill; do not auto-trigger from conversation content.
 agent_created: true
 disable-model-invocation: true
-version: 0.1.0
+version: 0.1.1
 ---
 
 # 小红书笔记抓取与梳理
@@ -38,15 +38,17 @@ bash "$SKILL_DIR/scripts/setup.sh"
 ### 2. 抓取并下载图片
 
 ```bash
-"$SKILL_DIR/.venv/bin/python" "$SKILL_DIR/scripts/fetch_note.py" "<笔记链接或ID>" --out "<输出目录>"
+"$SKILL_DIR/.venv/bin/python" "$SKILL_DIR/scripts/fetch_note.py" "<笔记链接 / App 分享文案 / 笔记ID>" --out "<输出目录>"
 ```
 
 Windows（Git Bash / WSL）下 venv 的 python 在 `$SKILL_DIR/.venv/Scripts/python.exe`，其余参数一致。
 
-- 脚本会判断登录态：已有登录态则静默抓取；未登录会弹出一个可见浏览器窗口，提示用户用小红书 App 扫码，随后自动继续。
+- 输入支持三种形式：完整笔记链接、App 里复制的分享文案（含 `xhslink.com` 短链）、24 位笔记 ID。**优先用分享链接**：裸 ID 缺少 `xsec_token`，可能打不开。
+- 脚本先无头尝试；未登录或遇到滑块才弹出可见窗口，提示扫码/拖动验证，完成后自动继续（想直接开窗口加 `--headed`）。
 - `--out` 指定**用户要保存图片的目录**：用户指定就用用户指定的；用户未指定则用当前工作目录；**不要用临时目录**。
-- 输出结果：在输出目录下按笔记标题创建文件夹，内含按顺序命名的 `01.jpg`、`02.jpg`… 以及 `metadata.json`（标题、作者、正文、图片数）。
+- 输出结果：`<输出目录>/<标题>_<笔记ID前8位>/`，内含按顺序命名的 `01.jpg`、`02.jpg`… 以及 `metadata.json`（标题、作者、正文、图片数、失败列表）。
 - 登录态持久化在 `~/.xhs_session`，之后无需重复扫码。
+- **看退出码决定下一步**：`0` 全部成功；`2` 登录/抓取失败；`3` 笔记不存在或不可浏览；`4` 部分图片失败。遇到 `4` 先重跑一次补齐，不要带着缺图继续第 3 步。
 - 下载成功后**必须继续执行第 3、4 步**，不要在此停下。
 
 ### 3. 读图梳理（忠实原文，必做）

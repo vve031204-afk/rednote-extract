@@ -1,27 +1,34 @@
 #!/usr/bin/env bash
 # 环境自检与安装脚本（跨平台，macOS / Linux / Windows-GitBash 可用）
 # 幂等、无交互：已就绪的部分秒级跳过，缺什么装什么。
-set -e
+set -eu
 export PIP_DISABLE_PIP_VERSION_CHECK=1
 
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV_DIR="$SKILL_DIR/.venv"
+REQ="$SKILL_DIR/requirements.txt"
 
-# 1. 定位可用的 Python3
+# 1. 定位可用的 Python3（要求 3.9+）
 PY=""
 for c in python3 python; do
-  command -v "$c" >/dev/null 2>&1 && { PY="$c"; break; }
+  if command -v "$c" >/dev/null 2>&1; then PY="$c"; break; fi
 done
 if [ -z "$PY" ]; then
-  echo "[错误] 未找到 python3，请先安装 Python 3.10+（https://www.python.org/downloads/）" >&2
+  echo "[错误] 未找到 python3，请先安装 Python 3.9+（https://www.python.org/downloads/）" >&2
   exit 1
 fi
 echo "[1/4] Python: $($PY --version 2>&1)"
+if ! "$PY" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 9) else 1)'; then
+  echo "[错误] 当前 Python 版本过低，需要 3.9 及以上" >&2
+  exit 1
+fi
 
-# 2. 创建 venv（已存在则跳过）
-if [ ! -x "$VENV_DIR/bin/python" ]; then
+# 2. 创建 venv（已存在则跳过；Windows 的 python 在 Scripts/ 下）
+if [ ! -x "$VENV_DIR/bin/python" ] && [ ! -x "$VENV_DIR/Scripts/python.exe" ]; then
   echo "[2/4] 创建独立虚拟环境 .venv ..."
   "$PY" -m venv "$VENV_DIR"
+else
+  echo "[2/4] .venv 已存在，跳过创建"
 fi
 PYBIN="$VENV_DIR/bin/python"
 [ -x "$PYBIN" ] || PYBIN="$VENV_DIR/Scripts/python.exe"
@@ -30,14 +37,18 @@ if [ ! -x "$PYBIN" ]; then
   exit 1
 fi
 
-# 3. 安装依赖（幂等：已装则跳过）
+# 3. 安装依赖（幂等：已装则跳过；优先用 requirements.txt 锁定大版本）
 echo "[3/4] 检查依赖 playwright + pillow ..."
 if "$PYBIN" -c "import playwright, PIL" 2>/dev/null; then
   echo "  ✓ 依赖已就绪，跳过安装"
 else
   echo "  安装 playwright + pillow（首次约 50MB，请耐心等待）..."
   "$PYBIN" -m pip install --quiet --no-input --upgrade pip
-  "$PYBIN" -m pip install --quiet --no-input playwright pillow
+  if [ -f "$REQ" ]; then
+    "$PYBIN" -m pip install --quiet --no-input -r "$REQ"
+  else
+    "$PYBIN" -m pip install --quiet --no-input playwright pillow
+  fi
 fi
 
 # 4. 检测浏览器（优先系统 Chrome；不自动下载 chromium，避免误判/下载卡住）
@@ -56,10 +67,10 @@ if [ "$HAS_CHROME" = "1" ]; then
 else
   echo "  ⚠ 未检测到系统 Chrome。"
   echo "    建议安装 Google Chrome：https://www.google.com/chrome/"
-  echo "    或手动下载 playwright chromium（可选，约 120MB）："
+  echo "    本脚本不会自动下载 chromium；如需回退方案，手动执行："
   echo "      $PYBIN -m playwright install chromium"
 fi
 
 echo ""
 echo "✓ 环境就绪。运行："
-echo "  $PYBIN $SKILL_DIR/scripts/fetch_note.py '<小红书笔记链接或ID>' --out <输出目录>"
+echo "  $PYBIN $SKILL_DIR/scripts/fetch_note.py '<笔记链接 / 分享文案 / 笔记ID>' --out <输出目录>"
