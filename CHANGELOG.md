@@ -2,6 +2,15 @@
 
 > 时间统一为北京时间（UTC+8），精确到秒。
 
+## v0.1.10 — 2026-10-20 13:02:54（UTC+8）
+
+GitHub 仓库更名为 `rednote-extract`：
+
+- 仓库地址：`https://github.com/vve031204-afk/rednote-extract`（旧地址 301 自动跳转）；
+- README 的 clone 地址与仓库链接同步更新；
+- 本地 `origin` 已指向新地址；
+- 功能、命令、退出码均无变化。
+
 ## v0.1.9 — 2026-10-20 13:00:11（UTC+8）
 
 Skill 更名为 `rednote-extract`：

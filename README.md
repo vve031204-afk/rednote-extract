@@ -1,6 +1,6 @@
 # rednote-extract
 
-> Skill 名：`rednote-extract`；GitHub 仓库地址仍为 `xiaohongshu-note-extract`（未改名）。
+> Skill 名：`rednote-extract`；GitHub 仓库：[vve031204-afk/rednote-extract](https://github.com/vve031204-afk/rednote-extract)。
 
 抓取小红书（xiaohongshu.com）笔记的全部图片并按顺序存档（webp 转 jpg），提取正文文字，并忠实原文做分点梳理。
 
@@ -28,13 +28,13 @@ tests/
 
 ```bash
 # WorkBuddy
-git clone https://github.com/vve031204-afk/xiaohongshu-note-extract.git ~/.workbuddy/skills/rednote-extract
+git clone https://github.com/vve031204-afk/rednote-extract.git ~/.workbuddy/skills/rednote-extract
 
 # Codex CLI（也可用项目内的 .agents/skills/）
-git clone https://github.com/vve031204-afk/xiaohongshu-note-extract.git ~/.agents/skills/rednote-extract
+git clone https://github.com/vve031204-afk/rednote-extract.git ~/.agents/skills/rednote-extract
 
 # DeepSeek Harness（也可用 ~/.agents/skills/ 共享目录）
-git clone https://github.com/vve031204-afk/xiaohongshu-note-extract.git ~/.dsh/skills/rednote-extract
+git clone https://github.com/vve031204-afk/rednote-extract.git ~/.dsh/skills/rednote-extract
 ```
 
 > 本仓库已公开，任何人可直接 clone，无需登录。
