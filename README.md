@@ -75,6 +75,7 @@ sleep 15 && tail -30 /tmp/xhs.log
 | `--http` | 优先用 HTTP 直连（不启动浏览器），失败回退浏览器 | 关 |
 | `--http-only` | 只用 HTTP 直连，失败不启动浏览器 | 关 |
 | `--no-save-cookies` | 不把浏览器 Cookie 缓存到 `~/.xhs_cookies.json` | 关 |
+| `--proxy` | HTTP/SOCKS 代理，如 `http://127.0.0.1:7890`（也可用 `XHS_PROXY`） | 关 |
 | `--progress-file` | 把当前阶段原子写入该文件，供外部轮询 | 关 |
 | `--isolated-profile` | 复制临时 profile（并发安全，结束保留） | 关 |
 | `--save-login-to` | 登录成功后写回的 profile | `~/.xhs_session` |
@@ -153,10 +154,12 @@ HTTP 模式只用 urllib 带 Cookie 拉详情页 HTML，解析 `__INITIAL_STATE_
 | 3 | 笔记不存在/私密/不可浏览 | 确认链接 |
 | 4 | 部分图片未下载成功 | 重跑补齐（会清理旧图） |
 | 5 | 需要登录或滑块验证 | 询问用户同意后运行 `--login` |
+| 6 | 账号安全限制（300011） | 换账号/降频/等 10-30 分钟，或用 `--proxy` 换 IP |
 
 ## 常见问题
 
 - **提示缺少 playwright**：先跑 `bash scripts/setup.sh`。
+- **提示 300011 / 账号异常**：这是账号维度的安全限制，不是 IP 问题。不要连续重试，换账号或等一段时间，必要时加 `--proxy` 换出口 IP。
 - **未登录、只有二维码页**：这是小红书的登录墙。脚本会以退出码 `5` 退出，确认后运行 `python scripts/fetch_note.py --login` 扫码，登录态会保存。
 - **为什么不再自动弹 Chrome**：默认无头；只有 `--login` 或显式 `--headed` 才会打开可见窗口。
 - **报「安全限制 / 300012」**：先加 `--headed` 重试一次。实测同一 IP、同一 cookie 下无头被拦、headed 3 秒通过，说明它更像无头指纹识别而不是 IP 封禁；headed 也失败时再切换网络/代理或手动完成验证。

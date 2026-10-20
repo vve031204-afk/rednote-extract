@@ -163,6 +163,24 @@ class PageStateTest(unittest.TestCase):
         self.assertEqual(fn.page_state(FakePage(None, loaded=False, body="安全限制 IP存在风险")),
                          "blocked")
         self.assertEqual(fn.page_state(FakePage(None, loaded=False, body="请扫码登录")), "login")
+        self.assertEqual(fn.page_state(FakePage(None, loaded=False,
+                                                body="账号存在异常 error_code=300011")),
+                         "security")
+
+
+class ProxyTest(unittest.TestCase):
+    def test_parse(self):
+        self.assertEqual(fn.parse_proxy("127.0.0.1:7890"),
+                         {"server": "http://127.0.0.1:7890"})
+
+    def test_auth(self):
+        cfg = fn.parse_proxy("http://u:p@localhost:1080")
+        self.assertEqual(cfg["username"], "u")
+        self.assertEqual(cfg["password"], "p")
+
+    def test_invalid(self):
+        with self.assertRaises(ValueError):
+            fn.parse_proxy("ftp://x:1")
 
 
 class MainFlowTest(unittest.TestCase):

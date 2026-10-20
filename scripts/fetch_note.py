@@ -70,6 +70,7 @@ CAPTCHA_MARKERS = ("拖动", "拼图", "滑块")
 LOGIN_MARKERS = ("扫码登录", "登录后查看", "登录后推荐", "立即登录")
 # 小红书对 IP 的风控页（error_code 300012），不是登录墙也不是笔记不存在
 BLOCKED_MARKERS = ("IP存在风险", "安全限制", "error_code=300012")
+SECURITY_MARKERS = ("error_code=300011", "账号存在异常", "账号异常", "账号被限制")
 
 LOGIN_HINT = ("需要登录小红书：请先询问用户，同意后运行 "
               "`fetch_note.py --login` 打开扫码窗口。")
@@ -91,6 +92,10 @@ window.chrome.runtime = window.chrome.runtime || {};
 Object.defineProperty(navigator, 'languages', {get: () => ['zh-CN', 'zh']});
 """
 
+SECURITY_HINT = (
+    "小红书返回账号安全限制（error_code 300011）。请不要连续重试：换账号、降低频率，"
+    "或等 10-30 分钟后再试；也可用 --proxy 换出口 IP。"
+)
 BLOCKED_HINT = ("小红书返回安全限制（error_code 300012）。优先用 --headed 重试一次："
                 "该错误常见于无头指纹被识别，而非 IP 被封；headed 仍失败再切换网络/代理。")
 
@@ -342,6 +347,8 @@ def page_state(page):
     text = _body_text(page)
     if any(k in text for k in UNAVAILABLE_MARKERS):
         return "unavailable"
+    if any(k in text for k in SECURITY_MARKERS):
+        return "security"
     if any(k in text for k in BLOCKED_MARKERS):
         return "blocked"
     if any(k in text for k in CAPTCHA_MARKERS):
@@ -359,7 +366,7 @@ def wait_for_note(page, timeout, label="等待笔记加载"):
     last_log = 0.0
     while time.time() < deadline:
         state = page_state(page)
-        if state in ("loaded", "unavailable", "captcha", "blocked"):
+        if state in ("loaded", "unavailable", "captcha", "blocked", "security"):
             return state
         if time.time() - last_log > 20:
             log("  %s..." % label)
@@ -490,6 +497,27 @@ def prune_stale(folder, saved_files):
                 pass
 
 
+def parse_proxy(url):
+    """把代理 URL 解析成 Playwright proxy 配置；非法时抛 ValueError。"""
+    raw = (url or "").strip()
+    if not raw:
+        raise ValueError("代理地址为空")
+    if "://" not in raw:
+        raw = "http://" + raw
+    from urllib.parse import urlsplit
+    parts = urlsplit(raw)
+    if parts.scheme not in ("http", "https", "socks5", "socks4"):
+        raise ValueError("不支持的协议：%s（可用 http/https/socks5/socks4）" % parts.scheme)
+    if not parts.hostname or not parts.port:
+        raise ValueError("缺少主机或端口，格式如 http://127.0.0.1:7890")
+    cfg = {"server": "%s://%s:%s" % (parts.scheme, parts.hostname, parts.port)}
+    if parts.username:
+        cfg["username"] = parts.username
+    if parts.password:
+        cfg["password"] = parts.password
+    return cfg
+
+
 class _HttpResponse:
     def __init__(self, status, headers, body):
         self.status = status
@@ -507,9 +535,16 @@ class _HttpResponse:
 class _UrllibRequest:
     """让 download() 能在纯 HTTP 模式下复用：只实现 ctx.request.get。"""
 
-    def __init__(self, cookie_header=""):
+    def __init__(self, cookie_header="", proxy_url=""):
+        import urllib.request
         self.cookie_header = cookie_header
+        self.proxy_url = proxy_url or ""
         self.request = self  # 复用 download() 里的 ctx.request.get
+        handlers = []
+        if self.proxy_url:
+            handlers.append(urllib.request.ProxyHandler(
+                {"http": self.proxy_url, "https": self.proxy_url}))
+        self.opener = urllib.request.build_opener(*handlers)
 
     def get(self, url, timeout=60000, headers=None):
         import urllib.error
@@ -517,7 +552,7 @@ class _UrllibRequest:
 
         req = urllib.request.Request(url, headers=self._headers(headers))
         try:
-            with urllib.request.urlopen(req, timeout=max(1, timeout / 1000)) as resp:
+            with self.opener.open(req, timeout=max(1, timeout / 1000)) as resp:
                 return _HttpResponse(resp.status, dict(resp.headers), resp.read())
         except urllib.error.HTTPError as e:
             return _HttpResponse(e.code, dict(e.headers or {}), e.read())
@@ -599,7 +634,7 @@ def _note_from_state(state, note_id):
     }
 
 
-def http_extract(url, note_id):
+def http_extract(url, note_id, proxy_url=""):
     """不启动浏览器：带 Cookie 直接 GET 详情页并解析 __INITIAL_STATE__。"""
     import urllib.error
     import urllib.request
@@ -616,12 +651,18 @@ def http_extract(url, note_id):
         "Accept-Encoding": "identity",
         "Upgrade-Insecure-Requests": "1",
     }
+    handlers = []
+    if proxy_url:
+        handlers.append(urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url}))
+    opener = urllib.request.build_opener(*handlers)
     req = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=45) as resp:
+        with opener.open(req, timeout=45) as resp:
             html = resp.read().decode("utf-8", "replace")
     except urllib.error.HTTPError as e:
         raise RuntimeError("HTTP %s" % e.code)
+    if any(k in html for k in SECURITY_MARKERS):
+        raise RuntimeError("账号安全限制（300011）")
     if any(k in html for k in BLOCKED_MARKERS):
         raise RuntimeError("被风控拦截（300012）")
     if "noteDetailMap" not in html:
@@ -873,6 +914,8 @@ def main():
                     help="只用 HTTP 直连，失败不启动浏览器（需先有一次浏览器运行缓存 Cookie）")
     ap.add_argument("--no-save-cookies", action="store_true",
                     help="不把浏览器 Cookie 缓存到 ~/.xhs_cookies.json")
+    ap.add_argument("--proxy", default=None,
+                    help="HTTP/SOCKS 代理，如 http://127.0.0.1:7890；也可用环境变量 XHS_PROXY")
     ap.add_argument("--progress-file", default=None,
                     help="把当前阶段原子写入该文件，供外部轮询")
     args = ap.parse_args()
@@ -882,6 +925,13 @@ def main():
 
     stealth = not args.no_stealth
     launch_kwargs = build_launch_kwargs(stealth)
+    proxy_url = (args.proxy or os.environ.get("XHS_PROXY") or "").strip()
+    if proxy_url:
+        try:
+            launch_kwargs["proxy"] = parse_proxy(proxy_url)
+        except ValueError as e:
+            fail(1, "代理地址无效：%s" % e)
+        log("使用代理：%s" % launch_kwargs["proxy"]["server"])
     base_profile = os.path.expanduser(args.profile)
     profile = base_profile
     if args.isolated_profile:
@@ -931,19 +981,19 @@ def main():
             log("没有 Cookie 缓存，跳过 HTTP 模式，改用浏览器。")
         else:
             try:
-                note = http_extract(url, note_id)
+                note = http_extract(url, note_id, proxy_url)
                 log("HTTP 模式成功：未启动浏览器。")
                 progress("done", stage_detail="http", title=note["title"],
                          image_count=len(note["images"]))
                 deliver(note, note_id, out_dir, args,
-                        _UrllibRequest(cookie_header_from_cache()), url)
+                        _UrllibRequest(cookie_header_from_cache(), proxy_url), url)
                 return 0
             except SystemExit:
                 raise
             except Exception as e:
-                log("HTTP 模式失败：%s" % e, err=True)
                 if args.http_only:
-                    fail(2, "HTTP 模式失败：%s" % e)
+                    fail(2, "HTTP 模式失败：%s（--http-only 不回退浏览器）" % e)
+                log("HTTP 模式失败：%s" % e, err=True)
 
     progress("launch", url=url, profile=profile, mode="probe" if args.probe else "fetch")
 
@@ -962,12 +1012,16 @@ def main():
 
             if state == "unavailable":
                 fail(3, "笔记不存在、已删除或不可浏览（私密/违规）。请确认链接有效。")
+            if state == "security":
+                fail(6, SECURITY_HINT)
             if state == "blocked":
                 fail(2, BLOCKED_HINT)
 
             if state != "loaded" and not args.headed:
                 # 默认不打开可见窗口：需要登录/验证时直接退出，由调用方询问用户
                 st = page_state(page)
+                if st == "security":
+                    fail(6, SECURITY_HINT)
                 if st == "blocked":
                     fail(2, BLOCKED_HINT)
                 if st == "captcha":
@@ -984,6 +1038,8 @@ def main():
                     state = "unknown"
                 if state == "unavailable":
                     fail(3, "笔记不存在、已删除或不可浏览（私密/违规）。请确认链接有效。")
+                if state == "security":
+                    fail(6, SECURITY_HINT)
                 if state == "blocked":
                     fail(2, BLOCKED_HINT)
                 if state != "loaded":
@@ -996,6 +1052,8 @@ def main():
                 st = page_state(page)
                 if st == "unavailable":
                     fail(3, "笔记不存在、已删除或不可浏览（私密/违规）。请确认链接有效。")
+                if st == "security":
+                    fail(6, SECURITY_HINT)
                 if st == "blocked":
                     fail(2, BLOCKED_HINT)
                 if st == "captcha":
