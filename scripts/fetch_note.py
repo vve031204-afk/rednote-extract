@@ -74,8 +74,8 @@ LOGIN_HINT = ("需要登录小红书：请先询问用户，同意后运行 "
               "`fetch_note.py --login` 打开扫码窗口。")
 CAPTCHA_HINT = ("需要人工完成滑块验证：请先询问用户，同意后运行 "
                 "`fetch_note.py --login` 打开验证窗口。")
-BLOCKED_HINT = ("小红书返回安全限制（IP 风险，error_code 300012）：请切换网络/代理后重试，"
-                "或在浏览器里手动打开小红书完成验证。")
+BLOCKED_HINT = ("小红书返回安全限制（error_code 300012）。优先用 --headed 重试一次："
+                "该错误常见于无头指纹被识别，而非 IP 被封；headed 仍失败再切换网络/代理。")
 
 
 def _now():
@@ -539,7 +539,8 @@ def main():
                     help="只做登录：打开一次可见窗口扫码，成功后保存登录态并退出")
     ap.add_argument("--probe", action="store_true",
                     help="只体检：检查登录态/笔记可浏览/图片数，不下载")
-    ap.add_argument("--out", default=os.getcwd(), help="输出目录（默认当前目录）")
+    ap.add_argument("--out", default=None,
+                    help="输出目录；指定后图片直接放进去，不指定则自动建 <标题>_<ID前8位>")
     ap.add_argument("--profile", default=DEFAULT_PROFILE, help="登录态持久化目录")
     ap.add_argument("--isolated-profile", action="store_true",
                     help="复制一份临时 profile（并发安全，结束不自动删除）")
@@ -597,7 +598,7 @@ def main():
     except ValueError as e:
         fail(1, str(e))
 
-    out_dir = os.path.expanduser(args.out)
+    out_dir = os.path.expanduser(args.out or os.getcwd())
     os.makedirs(out_dir, exist_ok=True)
     os.makedirs(profile, exist_ok=True)
     try:
@@ -688,7 +689,21 @@ def main():
             folder_name = safe_name(title)
             if note_id:
                 folder_name = "%s_%s" % (folder_name, note_id[:8])
-            folder = os.path.join(out_dir, folder_name)
+            if args.out:
+                # 用户显式选了目录：图片直接放进去；只有目录里已属于另一篇笔记时才建子目录
+                folder = out_dir
+                meta_path = os.path.join(folder, "metadata.json")
+                if os.path.isfile(meta_path):
+                    try:
+                        with open(meta_path, encoding="utf-8") as fh:
+                            existing = json.load(fh).get("id")
+                    except Exception:
+                        existing = None
+                    if existing and note_id and existing != note_id:
+                        folder = os.path.join(out_dir, folder_name)
+                        log("目标目录已有另一篇笔记（%s），本次改存到子目录。" % existing[:8])
+            else:
+                folder = os.path.join(out_dir, folder_name)
             os.makedirs(folder, exist_ok=True)
 
             log("标题: %s" % title)
