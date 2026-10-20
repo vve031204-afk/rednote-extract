@@ -170,25 +170,35 @@ class MainFlowTest(unittest.TestCase):
             with open(progress, encoding="utf-8") as fh:
                 self.assertEqual(json.load(fh)["stage"], "done")
 
-    def test_out_writes_directly_into_chosen_folder(self):
+    def test_out_creates_title_folder(self):
         note = {"id": "66f0c8a1000000001e01abcd", "title": "标题", "desc": "",
                 "author": "a", "time": 0, "images": [{"url": "https://img/1.jpg"}]}
         out = tempfile.mkdtemp()
         self.addCleanup(__import__("shutil").rmtree, out, True)
         self._run(note, ["--no-convert"], out=out)
-        self.assertTrue(os.path.isfile(os.path.join(out, "metadata.json")))
-        self.assertTrue(os.path.isfile(os.path.join(out, "01.webp")))
+        folder = os.path.join(out, "标题")
+        self.assertTrue(os.path.isfile(os.path.join(folder, "metadata.json")))
+        self.assertTrue(os.path.isfile(os.path.join(folder, "01.webp")))
 
-    def test_out_collision_uses_subfolder(self):
+    def test_collision_uses_id_suffix(self):
         note = {"id": "66f0c8a1000000001e01abcd", "title": "标题", "desc": "",
                 "author": "a", "time": 0, "images": [{"url": "https://img/1.jpg"}]}
         out = tempfile.mkdtemp()
         self.addCleanup(__import__("shutil").rmtree, out, True)
-        with open(os.path.join(out, "metadata.json"), "w", encoding="utf-8") as fh:
+        os.makedirs(os.path.join(out, "标题"))
+        with open(os.path.join(out, "标题", "metadata.json"), "w", encoding="utf-8") as fh:
             json.dump({"id": "aaaaaaaaaaaaaaaaaaaaaaaa"}, fh)
         self._run(note, ["--no-convert"], out=out)
-        sub = os.path.join(out, "标题_66f0c8a1", "metadata.json")
-        self.assertTrue(os.path.isfile(sub))
+        self.assertTrue(os.path.isfile(os.path.join(out, "标题_66f0c8a1", "metadata.json")))
+
+    def test_rerun_same_note_reuses_folder(self):
+        note = {"id": "66f0c8a1000000001e01abcd", "title": "标题", "desc": "",
+                "author": "a", "time": 0, "images": [{"url": "https://img/1.jpg"}]}
+        out = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, out, True)
+        self._run(note, ["--no-convert"], out=out)
+        self._run(note, ["--no-convert"], out=out)
+        self.assertEqual([d for d in os.listdir(out) if d != "profile"], ["标题"])
 
     def test_probe_does_not_download(self):
         note = {"id": "66f0c8a1000000001e01abcd", "title": "标题", "desc": "",

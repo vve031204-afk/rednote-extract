@@ -3,7 +3,7 @@ name: xiaohongshu-note-extract
 description: 小红书笔记抓取与梳理工具：按顺序下载笔记全部图片（webp 转 jpg）并忠实原文做分点梳理。仅当用户显式选定本 skill 时才调用，不要根据对话内容自动匹配触发。Xiaohongshu note extractor — downloads all note images in order and summarizes the author's content. Invoke only when the user explicitly selects this skill; do not auto-trigger from conversation content.
 agent_created: true
 disable-model-invocation: true
-version: 0.1.4
+version: 0.1.5
 ---
 
 # 小红书笔记抓取与梳理
@@ -71,7 +71,7 @@ Windows（Git Bash / WSL）下 venv 的 python 在 `$SKILL_DIR/.venv/Scripts/pyt
   ```
   该命令只做登录：打开一次可见窗口，检测到登录成功后**立即关闭**并保存登录态；随后重新执行第 2 步的抓取命令（仍为无头）。用户拒绝则停止任务并说明原因，不要擅自开窗口。
 - `--headed` 仅用于调试排查，默认不要使用。
-- `--out` 指定**用户要保存图片的目录**：用户指定了文件夹，图片就**直接放进该文件夹**（脚本不会再套一层）；用户未指定则省略 `--out`，脚本会在当前目录自动建 `<标题>_<ID前8位>/`。**不要用临时目录**。同一目录里已有另一篇笔记的 `metadata.json` 时，脚本会自动改用子目录，避免混在一起。
+- `--out` 指定**用户选定的项目文件夹**：脚本会在它下面建一个**以笔记标题命名的文件夹**（`<标题>/`），图片、`metadata.json`、梳理文档都放在里面；标题重名时才加 `_<ID前8位>` 后缀。用户未指定则用当前目录，同样建 `<标题>/`。**不要用临时目录**，也不要自己拼标题子目录。
 - 输出结果：`<输出目录>/<标题>_<笔记ID前8位>/`，内含按顺序命名的 `01.jpg`、`02.jpg`… 以及 `metadata.json`（标题、作者、正文、图片数、失败列表）。
 - 登录态持久化在 `~/.xhs_session`，之后无需重复扫码。
 - **退出码 `2` 且提示 `300012` 时，先加 `--headed` 重试一次**（先告诉用户「无头被风控拦了，我开个窗口跑」）：该错误多数是无头指纹被识别，不是 IP 被封；headed 仍失败再切换网络/代理。

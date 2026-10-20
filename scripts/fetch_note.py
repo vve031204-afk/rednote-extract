@@ -241,6 +241,39 @@ def safe_name(s):
     return s[:80] or "小红书笔记"
 
 
+def choose_folder(out_dir, title, note_id):
+    """在 out_dir 下选目录：优先 <标题>；被别的笔记占用才加 <ID前8位> 后缀。"""
+    base = safe_name(title)
+
+    def existing_id(path):
+        try:
+            with open(os.path.join(path, "metadata.json"), encoding="utf-8") as fh:
+                return json.load(fh).get("id")
+        except Exception:
+            return None
+
+    def usable(path):
+        if not os.path.isdir(path):
+            return True
+        if not os.listdir(path):
+            return True
+        return note_id is not None and existing_id(path) == note_id
+
+    folder = os.path.join(out_dir, base)
+    if usable(folder):
+        return folder
+    suffix = (note_id or "")[:8] or "副本"
+    folder = os.path.join(out_dir, "%s_%s" % (base, suffix))
+    if usable(folder):
+        return folder
+    i = 2
+    while True:
+        candidate = os.path.join(out_dir, "%s_%s_%d" % (base, suffix, i))
+        if usable(candidate):
+            return candidate
+        i += 1
+
+
 def extract_note(page, note_id=None):
     """从 __INITIAL_STATE__ 提取笔记数据。
 
@@ -686,24 +719,9 @@ def main():
                          image_count=image_count)
                 return 0
 
-            folder_name = safe_name(title)
-            if note_id:
-                folder_name = "%s_%s" % (folder_name, note_id[:8])
-            if args.out:
-                # 用户显式选了目录：图片直接放进去；只有目录里已属于另一篇笔记时才建子目录
-                folder = out_dir
-                meta_path = os.path.join(folder, "metadata.json")
-                if os.path.isfile(meta_path):
-                    try:
-                        with open(meta_path, encoding="utf-8") as fh:
-                            existing = json.load(fh).get("id")
-                    except Exception:
-                        existing = None
-                    if existing and note_id and existing != note_id:
-                        folder = os.path.join(out_dir, folder_name)
-                        log("目标目录已有另一篇笔记（%s），本次改存到子目录。" % existing[:8])
-            else:
-                folder = os.path.join(out_dir, folder_name)
+            folder = choose_folder(out_dir, title, note_id)
+            if os.path.basename(folder) != safe_name(title):
+                log("同名目录已被占用，本次改存：%s" % os.path.basename(folder))
             os.makedirs(folder, exist_ok=True)
 
             log("标题: %s" % title)
