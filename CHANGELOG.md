@@ -2,6 +2,15 @@
 
 > 时间统一为北京时间（UTC+8），精确到秒。
 
+## v0.1.9 — 2026-10-20 13:00:11（UTC+8）
+
+Skill 更名为 `rednote-extract`：
+
+- `SKILL.md` frontmatter `name` 由 `xiaohongshu-note-extract` 改为 `rednote-extract`；
+- 安装目录同步改为 `~/.dsh/skills/rednote-extract`（README 示例已更新）；
+- GitHub 仓库地址保持不变，仍为 `xiaohongshu-note-extract`；
+- 功能与退出码无变化。
+
 ## v0.1.8 — 2026-10-20 12:36:39（UTC+8）
 
 新增代理支持与账号风控分级：
