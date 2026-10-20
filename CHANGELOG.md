@@ -2,6 +2,17 @@
 
 > 时间统一为北京时间（UTC+8），精确到秒。
 
+## v0.1.7 — 2026-10-20 12:33:38（UTC+8）
+
+新增无浏览器直连模式，专治 300012 与弹窗：
+
+- 浏览器模式成功后自动缓存 Cookie 到 `~/.xhs_cookies.json`（0600，`--no-save-cookies` 可关）；
+- 新增 `--http`（先试无浏览器，失败回退浏览器）与 `--http-only`（只用 HTTP）；
+- HTTP 模式用 urllib 带 Cookie 拉详情页，解析 `__INITIAL_STATE__`，兼容 `undefined`、`new Map([])`、`new Set([])` 等 JS 字面量；
+- 实测同一条笔记 probe：浏览器 3.32s vs HTTP 0.84s；完整抓取 1.39s；
+- 下载复用同一套校验/重试逻辑（`_UrllibRequest` 适配 `ctx.request.get`）；
+- 新增 2 项解析测试，共 17 项通过。
+
 ## v0.1.6 — 2026-10-20 12:25:49（UTC+8）
 
 降低小红书风控识别（300012）：

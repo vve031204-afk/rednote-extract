@@ -3,7 +3,7 @@ name: xiaohongshu-note-extract
 description: 小红书笔记抓取与梳理工具：按顺序下载笔记全部图片（webp 转 jpg）并忠实原文做分点梳理。仅当用户显式选定本 skill 时才调用，不要根据对话内容自动匹配触发。Xiaohongshu note extractor — downloads all note images in order and summarizes the author's content. Invoke only when the user explicitly selects this skill; do not auto-trigger from conversation content.
 agent_created: true
 disable-model-invocation: true
-version: 0.1.6
+version: 0.1.7
 ---
 
 # 小红书笔记抓取与梳理
@@ -65,6 +65,7 @@ sleep 15 && tail -30 /tmp/xhs.log
 Windows（Git Bash / WSL）下 venv 的 python 在 `$SKILL_DIR/.venv/Scripts/python.exe`，其余参数一致。
 
 - 输入支持三种形式：完整笔记链接、App 里复制的分享文案（含 `xhslink.com` 短链）、24 位笔记 ID。**优先用分享链接**：裸 ID 缺少 `xsec_token`，可能打不开。
+- **优先用无浏览器模式**：首次用浏览器跑成功后，Cookie 会自动缓存到 `~/.xhs_cookies.json`（0600）；之后加 `--http` 可完全不启动浏览器、不弹窗，遇到 300012 时也先试这条。`--http-only` 表示失败也不回退浏览器。
 - **默认全程无头抓取，不会自动打开可见窗口**。如果退出码是 `5`（需要登录或滑块验证），先暂停任务，用提问卡片询问用户「是否现在打开 Chrome 扫码登录」；用户同意后再运行：
   ```bash
   "$SKILL_DIR/.venv/bin/python" "$SKILL_DIR/scripts/fetch_note.py" --login

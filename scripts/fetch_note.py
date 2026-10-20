@@ -48,6 +48,7 @@ try:
 except ImportError:
     Image = None
 
+COOKIE_CACHE = os.path.expanduser("~/.xhs_cookies.json")
 DEFAULT_PROFILE = os.path.join(os.path.expanduser("~"), ".xhs_session")
 
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
@@ -379,7 +380,8 @@ def is_logged_in(ctx):
     return False
 
 
-def login_flow(p, profile, launch_kwargs, timeout, write_back_to=None, stealth=True):
+def login_flow(p, profile, launch_kwargs, timeout, write_back_to=None, stealth=True,
+               cache_cookies=True):
     """打开一次可见窗口供用户扫码，登录成功后立即关闭并返回 0；超时返回 5。
 
     登录页可能自己跳转或新开标签页，循环里需要容忍页面被关闭、重新取页。
@@ -429,6 +431,8 @@ def login_flow(p, profile, launch_kwargs, timeout, write_back_to=None, stealth=T
                             log("登录态已回写到 %s" % write_back_to)
                         else:
                             log("登录态仅保存在 %s" % profile, err=True)
+                    if cache_cookies:
+                        save_cookies(ctx)
                     log("登录成功，登录态已保存。")
                     progress("login", detail="ok")
                     return 0
@@ -484,6 +488,164 @@ def prune_stale(folder, saved_files):
                 os.remove(os.path.join(folder, name))
             except OSError:
                 pass
+
+
+class _HttpResponse:
+    def __init__(self, status, headers, body):
+        self.status = status
+        self.headers = {str(k).lower(): v for k, v in (headers or {}).items()}
+        self._body = body
+
+    @property
+    def ok(self):
+        return 200 <= self.status < 300
+
+    def body(self):
+        return self._body
+
+
+class _UrllibRequest:
+    """让 download() 能在纯 HTTP 模式下复用：只实现 ctx.request.get。"""
+
+    def __init__(self, cookie_header=""):
+        self.cookie_header = cookie_header
+        self.request = self  # 复用 download() 里的 ctx.request.get
+
+    def get(self, url, timeout=60000, headers=None):
+        import urllib.error
+        import urllib.request
+
+        req = urllib.request.Request(url, headers=self._headers(headers))
+        try:
+            with urllib.request.urlopen(req, timeout=max(1, timeout / 1000)) as resp:
+                return _HttpResponse(resp.status, dict(resp.headers), resp.read())
+        except urllib.error.HTTPError as e:
+            return _HttpResponse(e.code, dict(e.headers or {}), e.read())
+
+    def _headers(self, extra):
+        base = {
+            "User-Agent": UA,
+            "Referer": "https://www.xiaohongshu.com/",
+            "Accept": "*/*",
+            "Accept-Language": "zh-CN,zh;q=0.9",
+            "Accept-Encoding": "identity",
+        }
+        if self.cookie_header:
+            base["Cookie"] = self.cookie_header
+        if extra:
+            base.update({k: v for k, v in extra.items() if k.lower() != "cookie"})
+        return base
+
+
+def save_cookies(ctx):
+    """把浏览器 Cookie 缓存到 ~/.xhs_cookies.json（0600），供 --http 复用。"""
+    try:
+        cookies = [c for c in ctx.cookies()
+                   if "xiaohongshu.com" in (c.get("domain") or "")
+                   or "rednote.com" in (c.get("domain") or "")]
+        if not cookies:
+            return False
+        tmp = COOKIE_CACHE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(cookies, fh, ensure_ascii=False)
+        os.replace(tmp, COOKIE_CACHE)
+        os.chmod(COOKIE_CACHE, 0o600)
+        return True
+    except Exception:
+        return False
+
+
+def cookie_header_from_cache():
+    try:
+        with open(COOKIE_CACHE, encoding="utf-8") as fh:
+            cookies = json.load(fh)
+    except Exception:
+        return ""
+    seen, parts = set(), []
+    for c in cookies:
+        name = c.get("name")
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        parts.append("%s=%s" % (name, c.get("value", "")))
+    return "; ".join(parts)
+
+
+def _note_from_state(state, note_id):
+    note_map = ((state or {}).get("note") or {}).get("noteDetailMap") or {}
+    item = note_map.get(note_id)
+    if not item:
+        for key, value in note_map.items():
+            item, note_id = value, key
+            break
+    card = (item or {}).get("note") or {}
+    if not card:
+        return None
+    title = (card.get("title") or "").strip()
+    desc = card.get("desc") or ""
+    if not title:
+        title = desc.strip().split("\n")[0][:40] or "小红书笔记"
+    images = []
+    for im in card.get("imageList") or []:
+        url = (im or {}).get("urlDefault") or (im or {}).get("url") or ""
+        if url:
+            images.append({"url": url.replace("http://", "https://", 1)})
+    return {
+        "title": title,
+        "desc": desc,
+        "author": ((card.get("user") or {}).get("nickname")) or "",
+        "time": card.get("time") or 0,
+        "images": images,
+    }
+
+
+def http_extract(url, note_id):
+    """不启动浏览器：带 Cookie 直接 GET 详情页并解析 __INITIAL_STATE__。"""
+    import urllib.error
+    import urllib.request
+
+    cookie_header = cookie_header_from_cache()
+    if not cookie_header:
+        raise RuntimeError("没有 Cookie 缓存，请先跑一次浏览器模式（会自动缓存）")
+    headers = {
+        "User-Agent": UA,
+        "Cookie": cookie_header,
+        "Referer": "https://www.xiaohongshu.com/",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "zh-CN,zh;q=0.9",
+        "Accept-Encoding": "identity",
+        "Upgrade-Insecure-Requests": "1",
+    }
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=45) as resp:
+            html = resp.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        raise RuntimeError("HTTP %s" % e.code)
+    if any(k in html for k in BLOCKED_MARKERS):
+        raise RuntimeError("被风控拦截（300012）")
+    if "noteDetailMap" not in html:
+        if "请先登录" in html or "website-login" in html:
+            raise RuntimeError("登录态失效")
+        raise RuntimeError("页面里没有 noteDetailMap（可能需要登录或链接无效）")
+    match = re.search(r"window\.__INITIAL_STATE__\s*=\s*(\{.*?\})\s*</script>", html, re.S)
+    if not match:
+        match = re.search(r"window\.__INITIAL_STATE__\s*=\s*(\{.*\})\s*</script>", html, re.S)
+    if not match:
+        raise RuntimeError("未找到 __INITIAL_STATE__")
+    raw = match.group(1)
+    # 页面里混着 JS 字面量：undefined / new Map([]) / new Set([])，先规整成合法 JSON
+    raw = re.sub(r"(?<=[:,\[])undefined(?=[,}\]])", "null", raw)
+    raw = re.sub(r"new Map\((?:\[\])?\)", "{}", raw)
+    raw = re.sub(r"new Set\((?:\[\])?\)", "[]", raw)
+    try:
+        state = json.loads(raw, strict=False)
+    except Exception as e:
+        raise RuntimeError("解析 __INITIAL_STATE__ 失败：%s" % e)
+    note = _note_from_state(state, note_id)
+    if not note or not note["images"]:
+        raise RuntimeError("未能从页面数据中提取到笔记/图片")
+    return note
 
 
 def download(ctx, imgs, folder, convert=True, retries=3):
@@ -615,6 +777,65 @@ def fail(code, message):
     sys.exit(code)
 
 
+def deliver(note, note_id, out_dir, args, ctx, url):
+    """统一的产出流程：probe / 建目录 / 下载 / 写 metadata。"""
+    note_id = note_id or note.get("id")
+    title = note["title"]
+    image_count = len(note["images"])
+
+    if args.probe:
+        log("probe OK：标题=%s | 作者=%s | 图片数=%s" %
+            (title, note["author"], image_count))
+        progress("done", stage_detail="probe", title=title,
+                 image_count=image_count)
+        return 0
+
+    folder = choose_folder(out_dir, title, note_id)
+    if os.path.basename(folder) != safe_name(title):
+        log("同名目录已被占用，本次改存：%s" % os.path.basename(folder))
+    os.makedirs(folder, exist_ok=True)
+
+    log("标题: %s" % title)
+    log("作者: %s" % note["author"])
+    log("图片数: %s" % image_count)
+    log("保存到: %s" % folder)
+    progress("download", folder=folder, title=title,
+             image_count=image_count, saved=0, failed=0)
+
+    saved, failed = download(ctx, note["images"], folder,
+                             convert=not args.no_convert,
+                             retries=args.retries)
+
+    prune_stale(folder, [s["file"] for s in saved])
+
+    meta = {
+        "id": note_id,
+        "title": title,
+        "desc": note["desc"],
+        "author": note["author"],
+        "time": note["time"],
+        "image_count": image_count,
+        "saved_count": len(saved),
+        "failed_count": len(failed),
+        "saved": saved,
+        "failed": failed,
+        "url": url,
+    }
+    with open(os.path.join(folder, "metadata.json"), "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
+
+    # 交付以 metadata.json 为准：先落盘、再打完成标记，最后才关浏览器
+    log("完成：共 %s 张，成功 %s 张，失败 %s 张；元数据见 metadata.json" %
+        (image_count, len(saved), len(failed)))
+    progress("done", stage_detail="complete", folder=folder, title=title,
+             image_count=image_count, saved=len(saved), failed=len(failed))
+    if failed:
+        for item in failed:
+            log("  - 第 %s 张：%s" % (item["index"], item["error"]), err=True)
+        fail(4, "部分图片未下载成功，请检查网络后重跑（重跑会补齐并清理旧图）。")
+    return 0
+
+
 def main():
     global PROGRESS_PATH
     try:
@@ -646,6 +867,12 @@ def main():
     ap.add_argument("--retries", type=int, default=3, help="单张图片下载重试次数（默认 3）")
     ap.add_argument("--no-stealth", action="store_true",
                     help="关闭反自动化伪装（排查兼容性问题时用）")
+    ap.add_argument("--http", action="store_true",
+                    help="优先用 HTTP 直连（不启动浏览器，失败再回退浏览器）")
+    ap.add_argument("--http-only", action="store_true",
+                    help="只用 HTTP 直连，失败不启动浏览器（需先有一次浏览器运行缓存 Cookie）")
+    ap.add_argument("--no-save-cookies", action="store_true",
+                    help="不把浏览器 Cookie 缓存到 ~/.xhs_cookies.json")
     ap.add_argument("--progress-file", default=None,
                     help="把当前阶段原子写入该文件，供外部轮询")
     args = ap.parse_args()
@@ -674,7 +901,7 @@ def main():
             pass
         with sync_playwright() as p:
             code = login_flow(p, profile, launch_kwargs, args.login_timeout, write_back_to,
-                              stealth=stealth)
+                              stealth=stealth, cache_cookies=not args.no_save_cookies)
         if args.isolated_profile:
             log("隔离 profile 保留在 %s（可手动删除）。" % profile)
         sys.exit(code)
@@ -696,6 +923,28 @@ def main():
         pass
 
     note_id = note_id_from(url)
+
+    if (args.http or args.http_only) and not args.headed:
+        if not os.path.isfile(COOKIE_CACHE):
+            if args.http_only:
+                fail(2, "没有 Cookie 缓存：请先跑一次浏览器模式（成功后会自动缓存到 %s）" % COOKIE_CACHE)
+            log("没有 Cookie 缓存，跳过 HTTP 模式，改用浏览器。")
+        else:
+            try:
+                note = http_extract(url, note_id)
+                log("HTTP 模式成功：未启动浏览器。")
+                progress("done", stage_detail="http", title=note["title"],
+                         image_count=len(note["images"]))
+                deliver(note, note_id, out_dir, args,
+                        _UrllibRequest(cookie_header_from_cache()), url)
+                return 0
+            except SystemExit:
+                raise
+            except Exception as e:
+                log("HTTP 模式失败：%s" % e, err=True)
+                if args.http_only:
+                    fail(2, "HTTP 模式失败：%s" % e)
+
     progress("launch", url=url, profile=profile, mode="probe" if args.probe else "fetch")
 
     with sync_playwright() as p:
@@ -764,60 +1013,10 @@ def main():
             if not note:
                 fail(2, "未能提取到笔记内容（可能仍未登录、链接无效或页面结构变化）。")
 
-            note_id = note_id or note.get("id")
-            title = note["title"]
-            image_count = len(note["images"])
-
-            if args.probe:
-                log("probe OK：标题=%s | 作者=%s | 图片数=%s" %
-                    (title, note["author"], image_count))
-                progress("done", stage_detail="probe", title=title,
-                         image_count=image_count)
-                return 0
-
-            folder = choose_folder(out_dir, title, note_id)
-            if os.path.basename(folder) != safe_name(title):
-                log("同名目录已被占用，本次改存：%s" % os.path.basename(folder))
-            os.makedirs(folder, exist_ok=True)
-
-            log("标题: %s" % title)
-            log("作者: %s" % note["author"])
-            log("图片数: %s" % image_count)
-            log("保存到: %s" % folder)
-            progress("download", folder=folder, title=title,
-                     image_count=image_count, saved=0, failed=0)
-
-            saved, failed = download(ctx, note["images"], folder,
-                                     convert=not args.no_convert,
-                                     retries=args.retries)
-
-            prune_stale(folder, [s["file"] for s in saved])
-
-            meta = {
-                "id": note_id,
-                "title": title,
-                "desc": note["desc"],
-                "author": note["author"],
-                "time": note["time"],
-                "image_count": image_count,
-                "saved_count": len(saved),
-                "failed_count": len(failed),
-                "saved": saved,
-                "failed": failed,
-                "url": url,
-            }
-            with open(os.path.join(folder, "metadata.json"), "w", encoding="utf-8") as f:
-                json.dump(meta, f, ensure_ascii=False, indent=2)
-
-            # 交付以 metadata.json 为准：先落盘、再打完成标记，最后才关浏览器
-            log("完成：共 %s 张，成功 %s 张，失败 %s 张；元数据见 metadata.json" %
-                (image_count, len(saved), len(failed)))
-            progress("done", stage_detail="complete", folder=folder, title=title,
-                     image_count=image_count, saved=len(saved), failed=len(failed))
-            if failed:
-                for item in failed:
-                    log("  - 第 %s 张：%s" % (item["index"], item["error"]), err=True)
-                fail(4, "部分图片未下载成功，请检查网络后重跑（重跑会补齐并清理旧图）。")
+            if not args.no_save_cookies:
+                save_cookies(ctx)
+            deliver(note, note_id, out_dir, args, ctx, url)
+            return 0
         finally:
             safe_close(ctx)
 

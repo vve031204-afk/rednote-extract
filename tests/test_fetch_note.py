@@ -125,6 +125,23 @@ class LockTest(unittest.TestCase):
             self.assertEqual(fn.clear_stale_locks(d), os.getpid())
 
 
+class HttpParseTest(unittest.TestCase):
+    def test_note_from_state(self):
+        state = {"note": {"noteDetailMap": {"abc": {"note": {
+            "title": "T", "desc": "d", "user": {"nickname": "n"}, "time": 1,
+            "imageList": [{"urlDefault": "http://x/1.jpg"}]}}}}}
+        note = fn._note_from_state(state, "abc")
+        self.assertEqual(note["title"], "T")
+        self.assertEqual(note["author"], "n")
+        self.assertEqual(note["images"][0]["url"], "https://x/1.jpg")
+
+    def test_note_from_state_fallback(self):
+        state = {"note": {"noteDetailMap": {"other": {"note": {
+            "title": "O", "desc": "", "user": {}, "imageList": []}}}}}
+        note = fn._note_from_state(state, "missing")
+        self.assertEqual(note["title"], "O")
+
+
 class StealthTest(unittest.TestCase):
     def test_stealth_kwargs(self):
         k = fn.build_launch_kwargs(True)

@@ -72,6 +72,9 @@ sleep 15 && tail -30 /tmp/xhs.log
 | `--login` | 只做登录：打开一次可见窗口扫码，成功后保存登录态并退出 | 关 |
 | `--probe` | 只体检：验证登录态/笔记可浏览/图片数，不下载 | 关 |
 | `--no-stealth` | 关闭反自动化伪装（兼容性排查用） | 关 |
+| `--http` | 优先用 HTTP 直连（不启动浏览器），失败回退浏览器 | 关 |
+| `--http-only` | 只用 HTTP 直连，失败不启动浏览器 | 关 |
+| `--no-save-cookies` | 不把浏览器 Cookie 缓存到 `~/.xhs_cookies.json` | 关 |
 | `--progress-file` | 把当前阶段原子写入该文件，供外部轮询 | 关 |
 | `--isolated-profile` | 复制临时 profile（并发安全，结束保留） | 关 |
 | `--save-login-to` | 登录成功后写回的 profile | `~/.xhs_session` |
@@ -119,6 +122,26 @@ python scripts/fetch_note.py --login
 4. 仍报 300012：先 `--headed` 重试（实测 headed 通过率更高），再考虑切换网络。
 
 调试兼容性问题时可加 `--no-stealth` 关闭全部伪装。
+
+## 无浏览器模式（--http，v0.1.7）
+
+浏览器模式成功跑一次后，会把小红书 Cookie 缓存到 `~/.xhs_cookies.json`（权限 0600）。之后可以：
+
+```bash
+python -u scripts/fetch_note.py "<分享链接>" --http       # 先试 HTTP，失败回退浏览器
+python -u scripts/fetch_note.py "<分享链接>" --http-only  # 只用 HTTP，失败直接报错
+```
+
+HTTP 模式只用 urllib 带 Cookie 拉详情页 HTML，解析 `__INITIAL_STATE__`，**不启动浏览器、不弹窗**，也没有无头指纹可被检测。
+
+实测同一条笔记（probe）：
+
+| 模式 | 耗时 |
+|---|---|
+| 浏览器（无头） | 3.32s |
+| HTTP 直连 | 0.84s |
+
+完整下载也能跑通（1.39s，图片走同一套校验/重试）。注意：Cookie 缓存是明文，文件权限已设为 0600；不用时可 `rm ~/.xhs_cookies.json`。
 
 ## 退出码
 
