@@ -2,6 +2,17 @@
 
 > 时间统一为北京时间（UTC+8），精确到秒。
 
+## v0.1.6 — 2026-10-20 12:25:49（UTC+8）
+
+降低小红书风控识别（300012）：
+
+- 新增反自动化默认配置：`ignore_default_args=["--enable-automation"]`、关闭 `AutomationControlled`；
+- UA 使用本机 Chrome 真实版本号（`Chrome/<version>`），不再出现 `HeadlessChrome`；
+- 注入 `navigator.webdriver = undefined`、补 `window.chrome.runtime`、`navigator.languages=['zh-CN','zh']`；
+- 统一 `locale=zh-CN`、`timezone_id=Asia/Shanghai`、1440×900 视口；
+- 新增 `--no-stealth` 关闭全部伪装，便于排查兼容性问题；
+- 新增 2 项启动参数测试，共 15 项通过；README 增加“降低风控检测”说明与使用建议。
+
 ## v0.1.5 — 2026-10-20 12:18:51（UTC+8）
 
 输出目录语义最终改为「项目文件夹 + 标题子文件夹」：

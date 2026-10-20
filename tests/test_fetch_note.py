@@ -125,6 +125,21 @@ class LockTest(unittest.TestCase):
             self.assertEqual(fn.clear_stale_locks(d), os.getpid())
 
 
+class StealthTest(unittest.TestCase):
+    def test_stealth_kwargs(self):
+        k = fn.build_launch_kwargs(True)
+        self.assertEqual(k["ignore_default_args"], ["--enable-automation"])
+        self.assertIn("--disable-blink-features=AutomationControlled", k["args"])
+        if "user_agent" in k:
+            self.assertNotIn("HeadlessChrome", k["user_agent"])
+            self.assertIn("Chrome/", k["user_agent"])
+
+    def test_no_stealth_kwargs(self):
+        k = fn.build_launch_kwargs(False)
+        self.assertNotIn("ignore_default_args", k)
+        self.assertNotIn("user_agent", k)
+
+
 class PageStateTest(unittest.TestCase):
     def test_states(self):
         self.assertEqual(fn.page_state(FakePage(None, loaded=True)), "loaded")

@@ -71,6 +71,7 @@ sleep 15 && tail -30 /tmp/xhs.log
 | `target` | 笔记链接 / 分享文案 / 笔记 ID（抓取时必填） | — |
 | `--login` | 只做登录：打开一次可见窗口扫码，成功后保存登录态并退出 | 关 |
 | `--probe` | 只体检：验证登录态/笔记可浏览/图片数，不下载 | 关 |
+| `--no-stealth` | 关闭反自动化伪装（兼容性排查用） | 关 |
 | `--progress-file` | 把当前阶段原子写入该文件，供外部轮询 | 关 |
 | `--isolated-profile` | 复制临时 profile（并发安全，结束保留） | 关 |
 | `--save-login-to` | 登录成功后写回的 profile | `~/.xhs_session` |
@@ -100,6 +101,24 @@ python scripts/fetch_note.py --login
 ```
 
 该命令打开一次可见窗口，登录成功（检测到 `web_session` cookie）后立即关闭并保存登录态到 `~/.xhs_session`（权限 700），之后的抓取仍为无头。
+
+## 降低风控检测（v0.1.6）
+
+默认就会做这些伪装，无需额外参数：
+
+- 用本机真实 Chrome（`channel="chrome"`），并用 `--version` 拿到的真实版本号拼 UA，避免 `HeadlessChrome`；
+- 启动参数去掉 `--enable-automation`，关闭 `AutomationControlled` blink 特性；
+- 注入脚本：`navigator.webdriver` 置为 `undefined`、补 `window.chrome.runtime`、`navigator.languages = ['zh-CN','zh']`；
+- `locale=zh-CN`、`timezone_id=Asia/Shanghai`、1440×900 视口。
+
+仍有几类因素脚本管不到：出口 IP 信誉、短时间访问频率、账号/设备历史、Canvas/WebGL 等硬件指纹、鼠标轨迹。实践建议：
+
+1. 优先用带 `xsec_token` 的分享链接，别用裸 ID；
+2. 同一 IP 不要短时间连续抓多篇，失败后等几分钟再试；
+3. 用已登录的真实 profile（`~/.xhs_session`），匿名新 profile 更容易被标记；
+4. 仍报 300012：先 `--headed` 重试（实测 headed 通过率更高），再考虑切换网络。
+
+调试兼容性问题时可加 `--no-stealth` 关闭全部伪装。
 
 ## 退出码
 

@@ -74,6 +74,22 @@ LOGIN_HINT = ("需要登录小红书：请先询问用户，同意后运行 "
               "`fetch_note.py --login` 打开扫码窗口。")
 CAPTCHA_HINT = ("需要人工完成滑块验证：请先询问用户，同意后运行 "
                 "`fetch_note.py --login` 打开验证窗口。")
+CHROME_PATHS = (
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+)
+UA_TEMPLATE = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+               "(KHTML, like Gecko) Chrome/%s Safari/537.36")
+STEALTH_JS = """
+Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+window.chrome = window.chrome || {};
+window.chrome.runtime = window.chrome.runtime || {};
+Object.defineProperty(navigator, 'languages', {get: () => ['zh-CN', 'zh']});
+"""
+
 BLOCKED_HINT = ("小红书返回安全限制（error_code 300012）。优先用 --headed 重试一次："
                 "该错误常见于无头指纹被识别，而非 IP 被封；headed 仍失败再切换网络/代理。")
 
@@ -363,14 +379,14 @@ def is_logged_in(ctx):
     return False
 
 
-def login_flow(p, profile, launch_kwargs, timeout, write_back_to=None):
+def login_flow(p, profile, launch_kwargs, timeout, write_back_to=None, stealth=True):
     """打开一次可见窗口供用户扫码，登录成功后立即关闭并返回 0；超时返回 5。
 
     登录页可能自己跳转或新开标签页，循环里需要容忍页面被关闭、重新取页。
     """
     log("正在打开浏览器窗口，请用小红书 App 扫码登录（成功后窗口会自动关闭）...")
     progress("login", detail="opening")
-    ctx = launch_context(p, profile, headless=False, launch_kwargs=launch_kwargs)
+    ctx = launch_context(p, profile, headless=False, launch_kwargs=launch_kwargs, stealth=stealth)
     try:
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         try:
@@ -511,7 +527,41 @@ def download(ctx, imgs, folder, convert=True, retries=3):
     return saved, failed
 
 
-def launch_context(p, profile, headless, launch_kwargs):
+def chrome_user_agent():
+    """用本机 Chrome 的真实版本号拼 UA，避免 HeadlessChrome。"""
+    import subprocess
+    for path in CHROME_PATHS:
+        if not os.path.exists(path):
+            continue
+        try:
+            out = subprocess.check_output([path, "--version"], stderr=subprocess.DEVNULL,
+                                          timeout=10).decode()
+            version = out.strip().split()[-1]
+            if re.match(r"^\d+\.", version):
+                return UA_TEMPLATE % version
+        except Exception:
+            continue
+    return None
+
+
+def build_launch_kwargs(stealth=True):
+    """构造启动参数；stealth=True 时去掉自动化标记并伪装成真实 Chrome。"""
+    kwargs = dict(
+        viewport={"width": 1440, "height": 900},
+        locale="zh-CN",
+        timezone_id="Asia/Shanghai",
+        args=["--no-first-run", "--no-default-browser-check"],
+    )
+    if stealth:
+        kwargs["ignore_default_args"] = ["--enable-automation"]
+        kwargs["args"] += ["--disable-blink-features=AutomationControlled"]
+        ua = chrome_user_agent()
+        if ua:
+            kwargs["user_agent"] = ua
+    return kwargs
+
+
+def launch_context(p, profile, headless, launch_kwargs, stealth=True):
     """启动浏览器：先清理 stale 锁，优先系统 Chrome，其次 playwright chromium。"""
     busy = clear_stale_locks(profile)
     if busy:
@@ -527,8 +577,14 @@ def launch_context(p, profile, headless, launch_kwargs):
                 kwargs = dict(launch_kwargs)
                 if channel:
                     kwargs["channel"] = channel
-                return p.chromium.launch_persistent_context(
+                ctx = p.chromium.launch_persistent_context(
                     profile, headless=headless, **kwargs)
+                if stealth:
+                    try:
+                        ctx.add_init_script(STEALTH_JS)
+                    except Exception:
+                        pass
+                return ctx
             except Exception as e:
                 msg = str(e)
                 errors.append(msg)
@@ -588,6 +644,8 @@ def main():
     ap.add_argument("--login-timeout", type=int, default=90,
                     help="登录模式下最长等待秒数（默认 90）")
     ap.add_argument("--retries", type=int, default=3, help="单张图片下载重试次数（默认 3）")
+    ap.add_argument("--no-stealth", action="store_true",
+                    help="关闭反自动化伪装（排查兼容性问题时用）")
     ap.add_argument("--progress-file", default=None,
                     help="把当前阶段原子写入该文件，供外部轮询")
     args = ap.parse_args()
@@ -595,11 +653,8 @@ def main():
     if args.progress_file:
         PROGRESS_PATH = os.path.abspath(os.path.expanduser(args.progress_file))
 
-    launch_kwargs = dict(
-        viewport={"width": 1360, "height": 940},
-        locale="zh-CN",
-        args=["--disable-blink-features=AutomationControlled", "--no-first-run"],
-    )
+    stealth = not args.no_stealth
+    launch_kwargs = build_launch_kwargs(stealth)
     base_profile = os.path.expanduser(args.profile)
     profile = base_profile
     if args.isolated_profile:
@@ -618,7 +673,8 @@ def main():
         except OSError:
             pass
         with sync_playwright() as p:
-            code = login_flow(p, profile, launch_kwargs, args.login_timeout, write_back_to)
+            code = login_flow(p, profile, launch_kwargs, args.login_timeout, write_back_to,
+                              stealth=stealth)
         if args.isolated_profile:
             log("隔离 profile 保留在 %s（可手动删除）。" % profile)
         sys.exit(code)
@@ -644,7 +700,7 @@ def main():
 
     with sync_playwright() as p:
         ctx = launch_context(p, profile, headless=not args.headed,
-                             launch_kwargs=launch_kwargs)
+                             launch_kwargs=launch_kwargs, stealth=stealth)
         try:
             page = ctx.pages[0] if ctx.pages else ctx.new_page()
             progress("load", url=url)
